@@ -1528,7 +1528,7 @@ Si la couverture de code par les tests est inférieure à 70 %, `pytest` retourn
 
 ### 2.5 Stage 4 - Push (conditionnel)
 
-Le **Push** ne s'exécute que sur la branche `main`. Les branches de feature sont buildées et testées mais leurs images ne sont pas poussées vers le registry — cela évite de polluer le registry avec des images non validées.
+Le **Push** ne s'exécute que sur la branche `main`. Les branches de feature sont buildées et testées mais leurs images ne sont pas poussées vers le registry - cela évite de polluer le registry avec des images non validées.
 
 ```groovy
 stage('Push') {
