@@ -1458,7 +1458,7 @@ stage('Checkout') {
 
 ### 2.3 Stage 2 - Lint
 
-Le **Lint** analyse le code Python avec `flake8` avant même de construire l'image Docker. C'est le principe **Fail Fast** : détecter les erreurs de syntaxe le plus tôt possible. `flake8` est lancé dans un conteneur Docker éphémère — aucune dépendance sur l'agent Jenkins.
+Le **Lint** analyse le code Python avec `flake8` avant même de construire l'image Docker. C'est le principe **Fail Fast** : détecter les erreurs de syntaxe le plus tôt possible. `flake8` est lancé dans un conteneur Docker éphémère - aucune dépendance sur l'agent Jenkins.
 
 ```groovy
 stage('Lint') {
