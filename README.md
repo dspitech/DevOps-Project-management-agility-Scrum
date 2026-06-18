@@ -1,4 +1,4 @@
-# Lab DevOps - Project management & agility – Scrum
+# Lab DevOps - Project management & agility - Scrum
 
 ### Nom : Lo | Prénom : Pape | Email : pape.lo@estiam.com
 
