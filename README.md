@@ -1694,7 +1694,7 @@ Même problème : la commande échoue, le pipeline plante sur le nettoyage.
 Avec `|| true`, si `docker compose down` échoue pour n'importe quelle raison, le shell retourne `0` et Jenkins continue sans marquer le build comme échoué à cause du nettoyage.
 
 
-En résumé : `|| true` rend le nettoyage **non bloquant** — il est tenté dans tous les cas, mais son échec éventuel n'impacte pas le résultat final du build.
+En résumé : `|| true` rend le nettoyage **non bloquant** - il est tenté dans tous les cas, mais son échec éventuel n'impacte pas le résultat final du build.
 
 **Question 2.2**
 Expliquez la différence entre `agent any` et `agent { docker { image 'python:3.11' } }`. Dans quel cas utiliseriez-vous le second ?
