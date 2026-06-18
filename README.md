@@ -1921,7 +1921,7 @@ GitHub notifie Jenkins instantanément à chaque git push. C'est GitHub qui pren
 | **Qui initie la communication** | Jenkins interroge GitHub | GitHub notifie Jenkins |
 | **Charge réseau** | Requêtes constantes même sans commit | Requête uniquement en cas de push |
 | **Charge sur Jenkins** | Réveil périodique inutile s'il n'y a pas de commit | Sollicité uniquement lorsque nécessaire |
-| **Configuration requise** | Aucune — Jenkins accessible uniquement en local | Jenkins doit être accessible depuis Internet (ngrok, IP publique) |
+| **Configuration requise** | Aucune - Jenkins accessible uniquement en local | Jenkins doit être accessible depuis Internet (ngrok, IP publique) |
 | **Fiabilité** | Fonctionne même derrière un pare-feu | Dépend de la disponibilité du tunnel ou de l'IP publique |
 
 Console Output :
