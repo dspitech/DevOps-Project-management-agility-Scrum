@@ -1816,31 +1816,32 @@ Actuellement Jenkins vérifie les nouveaux commits toutes les 5 minutes (Poll SC
 Jenkins tourne en local sur votre machine. GitHub ne peut pas y accéder directement. **ngrok** crée un tunnel public temporaire qui rend Jenkins accessible depuis l'extérieur.
 
 ```bash
-# 1. Ajouter la clé GPG
+# Ajouter la clé GPG
 curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
 
-# 2. Ajouter le dépôt
+# Ajouter le dépôt
 echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" | sudo tee /etc/apt/sources.list.d/ngrok.list
 
-# 3. Mettre à jour et installer
+# Mettre à jour et installer
 sudo apt update
 sudo apt install ngrok
 
-# 4. Vérifier la version
+# Vérifier la version
 ngrok --version
-# 2. Vérifier l'installation
+# Vérifier l'installation
 ngrok --version
 
-# 1. Configurer votre token (syntaxe v3)
-ngrok config add-authtoken .......
+# Configurer votre token (syntaxe v3)
+# Pour avoir le token aller  sur le site officiel et créer un compte; à la fin vous aurez le token. Site : https://dashboard.ngrok.com/
+ngrok config add-authtoken + Mettre le token
 
-# 2. Démarrer le tunnel
+# Démarrer le tunnel
 nohup ngrok http 8080 --log=stdout --log-level=info > ngrok.log 2>&1 &
 
-# 3. Attendre le démarrage
+# Attendre le démarrage
 sleep 3
 
-# 4. Récupérer l'URL
+# Récupérer l'URL
 curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; data=json.load(sys.stdin); print('🌐 URL publique :', data['tunnels'][0]['public_url'])"
 
 ```
