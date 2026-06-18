@@ -1369,7 +1369,7 @@ gh auth token
 
 ---
 
-### ❓ Questions - Partie 1
+###  Questions - Partie 1
 
 **Question 1.1**
 Faites un screenshot de la page d'accueil Jenkins (Dashboard) avec votre compte connecté. Quel est le rôle du volume `jenkins-data` monté sur `/var/jenkins_home` ?
@@ -1658,7 +1658,7 @@ git push origin main
 
 ---
 
-### ❓ Questions - Partie 2
+###  Questions - Partie 2
 
 **Question 2.1**
 À quoi sert le bloc `post { always { } }` dans le pipeline ? Pourquoi ajoute-t-on `|| true` à la commande `docker compose down` ?
@@ -1767,7 +1767,7 @@ docker exec -u root jenkins chmod 666 /var/run/docker.sock
 
 ---
 
-### ❓ Questions - Partie 3
+###  Questions - Partie 3
 
 **Question 3.1**
 Faites un screenshot du pipeline après le premier build réussi (vue stages ou Console Output). Quel tag a été attribué à l'image Docker construite ? Retrouvez cette valeur dans les logs Jenkins.
@@ -1842,7 +1842,7 @@ nohup ngrok http 8080 --log=stdout --log-level=info > ngrok.log 2>&1 &
 sleep 3
 
 # Récupérer l'URL
-curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; data=json.load(sys.stdin); print('🌐 URL publique :', data['tunnels'][0]['public_url'])"
+curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; data=json.load(sys.stdin); print(' URL publique :', data['tunnels'][0]['public_url'])"
 
 ```
 
@@ -1897,7 +1897,7 @@ git push origin --delete feat/test-webhook
 
 ---
 
-### ❓ Questions - Partie 4
+###  Questions - Partie 4
 
 **Question 4.1**
 Le pipeline s'est-il déclenché automatiquement après le push ? Faites un screenshot du build automatique. Quelle est la différence entre Poll SCM et un webhook en termes de délai et de charge serveur ?
@@ -2062,6 +2062,777 @@ En pratique :
 -  Image Docker visible dans **GitHub Packages** avec le tag SHA Git
 -  Screenshot du déclenchement automatique via webhook ou Poll SCM
 -  Réponses aux questions **1.1, 1.2, 2.1, 2.2, 2.3, 3.1, 3.2, 4.1** et synthèse
+
+---
+# Déploiement automatisé + Pipeline Jenkins
+
+
+## Description 
+
+Ce TP met en place un déploiement automatisé de bout en bout de l’infrastructure DevOps.
+
+Ce déploiement constitue un bonus  en automatisant les travaux pratiques **TP1** et **TP2**.
+
+![image](https://hackmd.io/_uploads/Byj12TZzGe.png)
+
+
+## Objectifs
+- Installation de Docker CE et Docker Compose
+- Installation de Git, Make et GitHub CLI
+- Clonage du projet `sentiment-ai` 
+- Configuration des permissions et montage du disque `/data` 
+- Installation et démarrage de Jenkins (DooD)
+- Configuration de Docker dans Jenkins 
+- Installation et configuration de ngrok avec token
+- Configuration de l’URL Jenkins via ngrok
+- Création automatique du fichier `INFO.txt` contenant toutes les informations de connexion 
+
+## Moins de configuration manuelle
+
+Grâce à cette automatisation, le temps de mise en place passe de plusieurs heures de configuration manuelle à seulement quelques minutes de configuration post-déploiement.
+
+---
+
+## Architecture déployée
+
+| Ressource | Valeur |
+|---|---|
+| Resource Group | `OpenLab-Sweden-RG` |
+| Région | `swedencentral` |
+| VM | `OpenLab-VM-Student` - Ubuntu 22.04 LTS |
+| Taille | `Standard_B2s_v2` (2 vCPU / 4 Go RAM) |
+| Utilisateur | `labadmin` |
+| Authentification | Clé SSH générée automatiquement par Terraform |
+| IP publique | Standard SKU, statique |
+| Disque de données | Premium_LRS 64 Go → monté sur `/data` |
+| State Terraform | Azure Blob Storage |
+
+### Ports ouverts (NSG)
+
+| Port | Service |
+|---|---|
+| 22 | SSH |
+| 8080 | Jenkins |
+| 8081 | Jenkins (alternatif) |
+| 8000 | FastAPI / Uvicorn |
+| 50000 | Jenkins Agent JNLP |
+| 9000 | SonarQube (TP3) |
+| 9090 | Prometheus (TP5) |
+| 3000 | Grafana (TP5) |
+| 443 | HTTPS |
+| 3389 | RDP |
+| 5900 | VNC |
+| 8006 | Proxmox |
+| 8989 | Application custom |
+
+### Ce qui est automatisé vs manuel
+
+| Action | Automatisé | Manuel |
+|---|---|---|
+| Génération clé SSH |  Terraform `tls` provider |  |
+| State distant Azure |  Backend Storage Account |  |
+| Installation Docker CE + Compose |  cloud-init |  |
+| Installation Git, Make, curl |  cloud-init |  |
+| Installation GitHub CLI |  cloud-init |  |
+| Installation Terraform |  cloud-init |  |
+| Installation ngrok + token |  cloud-init |  |
+| Démarrage Jenkins (DooD) |  cloud-init |  |
+| Docker dans Jenkins + permissions |  cloud-init |  |
+| Configuration URL Jenkins → ngrok |  cloud-init |  |
+| Clonage projet `sentiment-ai` |  cloud-init |  |
+| Fichier `INFO.txt` avec accès |  cloud-init |  |
+| Mot de passe Jenkins initial |  |  À récupérer |
+| Plugins Jenkins |  |  À installer |
+| Credentials GitHub dans Jenkins |  |  À configurer |
+| Job Jenkins `sentiment-ai-pipeline` |  |  À créer |
+| Webhook GitHub |  |  À configurer |
+
+---
+
+## Fichiers du projet
+
+```
+.
+├── main.tf              # Infrastructure complète (VM, réseau, NSG, disque, clé SSH)
+├── backend.tf           # State distant Azure Blob Storage
+├── cloud-init.yaml      # Provisionnement automatique de la VM
+└── scripts/
+    └── setup-backend.sh # Création du Storage Account backend
+```
+
+---
+
+## Partie 1 - Déploiement de la VM (Azure Cloud Shell)
+
+> Toutes les commandes suivantes s'exécutent dans **Azure Cloud Shell (PowerShell)**.
+
+### Étape 1 - Cloner la configuration Terraform
+
+```powershell
+git clone https://github.com/dspitech/DevOps-VM-Ubuntu-Terraform-Azure.git
+cd DevOps-VM-Ubuntu-Terraform-Azure
+```
+
+- Lancer Visual Studio Code depuis Cloud Shell
+```
+code .
+```
+
+- Modifier la configuration du fichier `cloud-init.yaml`
+
+```yaml
+#cloud-config
+# ============================================================
+# Cloud-init — Provisionnement automatique au premier démarrage
+# Installe : Docker CE + Docker Compose + Git + Make + GitHub CLI + ngrok + Terraform
+# Tous les services sont configurés avec les bonnes permissions
+# Installation Docker CE + Compose	
+# Installation Git, Make, curl	
+# Installation GitHub CLI	
+# Installation Terraform	
+# Installation ngrok v3	
+# Configuration token ngrok	
+# Démarrage ngrok avec bonnes permissions	
+# Récupération URL ngrok	
+# Création volume Jenkins	
+# Lancement Jenkins (DooD)	
+# Installation Docker dans Jenkins	
+# Configuration Jenkins avec URL ngrok	
+# Récupération mot de passe Jenkins	
+# Clonage du projet sentiment-ai	
+# Création fichier INFO.txt complet	
+# Message MOTD personnalisé	
+# Logs dans /var/log/openlab-init.log
+# ============================================================
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - git
+  - make
+  - curl
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - apt-transport-https
+  - unzip
+  - jq
+  - python3
+  - python3-pip
+
+runcmd:
+  # ----------------------------------------------------------
+  # Installation de Docker CE 
+  # ----------------------------------------------------------
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - |
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+      https://download.docker.com/linux/ubuntu \
+      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+      tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt-get update -y
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+  # ----------------------------------------------------------
+  # Installation de Terraform
+  # ----------------------------------------------------------
+  - |
+    wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+    apt-get update -y
+    apt-get install -y terraform
+
+  # ----------------------------------------------------------
+  # Installation de GitHub CLI
+  # ----------------------------------------------------------
+  - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+  - chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+  - |
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+    https://cli.github.com/packages stable main" | \
+    tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+  - apt-get update -y
+  - apt-get install -y gh
+
+  # ----------------------------------------------------------
+  # Installation de ngrok 
+  # ----------------------------------------------------------
+  - curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+  - echo "deb https://ngrok-agent.s3.amazonaws.com bookworm main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+  - apt-get update -y
+  - apt-get install -y ngrok
+
+  # ----------------------------------------------------------
+  # Ajouter l'utilisateur admin au groupe docker 
+  # ----------------------------------------------------------
+  - usermod -aG docker labadmin
+
+  # ----------------------------------------------------------
+  # Activer et démarrer Docker au boot
+  # ----------------------------------------------------------
+  - systemctl enable docker
+  - systemctl start docker
+
+  # ----------------------------------------------------------
+  # Formater et monter le disque de données (/dev/sdc → /data)
+  # ----------------------------------------------------------
+  - |
+    DISK="/dev/sdc"
+    MOUNT="/data"
+    if [ -b "$DISK" ] && ! blkid "$DISK" | grep -q TYPE; then
+      mkfs.ext4 -F "$DISK"
+    fi
+    mkdir -p "$MOUNT"
+    if ! grep -q "$DISK" /etc/fstab; then
+      UUID=$(blkid -s UUID -o value "$DISK")
+      echo "UUID=$UUID $MOUNT ext4 defaults,nofail 0 2" >> /etc/fstab
+    fi
+    mount -a
+
+  # ----------------------------------------------------------
+  # Cloner le projet SentimentAI 
+  # ----------------------------------------------------------
+  - |
+    cd /home/labadmin
+    git clone https://github.com/dev/sentiment-ai.git 2>/dev/null || echo "Repo déjà existant"
+    chown -R labadmin:labadmin /home/labadmin/sentiment-ai
+    chmod -R 755 /home/labadmin/sentiment-ai
+
+  # ----------------------------------------------------------
+  # CRÉATION DES DOSSIERS NGROK 
+  # ----------------------------------------------------------
+  - |
+    # Supprimer l'ancienne config si elle existe
+    rm -rf /home/labadmin/.config/ngrok
+    mkdir -p /home/labadmin/.config/ngrok
+    chown -R labadmin:labadmin /home/labadmin/.config
+    chmod 755 /home/labadmin/.config/ngrok
+
+  # ----------------------------------------------------------
+  # CONFIGURATION DU TOKEN NGROK EN TANT QUE LABADMIN
+  # REMPLACEZ "METTRE_VOTRE_TOKEN_NGROK_ICI" PAR VOTRE TOKEN
+  # Pour obtenir votre token : https://dashboard.ngrok.com/get-started/your-authtoken
+  # ----------------------------------------------------------
+  - |
+    su - labadmin -c "ngrok config add-authtoken METTRE_VOTRE_TOKEN_NGROK_ICI"
+    chown labadmin:labadmin /home/labadmin/.config/ngrok/ngrok.yml
+    chmod 644 /home/labadmin/.config/ngrok/ngrok.yml
+
+  # ----------------------------------------------------------
+  # CRÉER LE SCRIPT DE DÉMARRAGE NGROK
+  # ----------------------------------------------------------
+  - |
+    cat > /home/labadmin/start-ngrok.sh << 'SCRIPT'
+    #!/bin/bash
+    cd /home/labadmin
+    pkill ngrok 2>/dev/null
+    rm -f /home/labadmin/ngrok.log
+    nohup /usr/bin/ngrok http 8080 --log=stdout --log-level=info > /home/labadmin/ngrok.log 2>&1 &
+    sleep 5
+    if ps aux | grep -v grep | grep ngrok > /dev/null; then
+      echo " ngrok démarré - PID: $(pgrep ngrok)"
+    else
+      echo " Échec du démarrage de ngrok"
+      cat /home/labadmin/ngrok.log
+    fi
+    SCRIPT
+    chmod +x /home/labadmin/start-ngrok.sh
+    chown labadmin:labadmin /home/labadmin/start-ngrok.sh
+
+  # ----------------------------------------------------------
+  # DÉMARRER NGROK 
+  # ----------------------------------------------------------
+  - |
+    su - labadmin -c "/home/labadmin/start-ngrok.sh"
+    sleep 5
+
+  # ----------------------------------------------------------
+  # RÉCUPÉRER L'URL NGROK
+  # ----------------------------------------------------------
+  - |
+    sleep 3
+    NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['tunnels'][0]['public_url'] if data.get('tunnels') else '')" 2>/dev/null)
+    echo " URL ngrok : $NGROK_URL" >> /var/log/openlab-init.log
+
+  # ----------------------------------------------------------
+  # CRÉER LE VOLUME JENKINS
+  # ----------------------------------------------------------
+  - |
+    docker volume create jenkins-data 2>/dev/null || true
+    docker rm -f jenkins 2>/dev/null || true
+
+  # ----------------------------------------------------------
+  # LANCER JENKINS VIA DOCKER 
+  # ----------------------------------------------------------
+  - |
+    docker run -d \
+      --name jenkins \
+      -p 8080:8080 \
+      -p 50000:50000 \
+      -v jenkins-data:/var/jenkins_home \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v /home/labadmin:/home/labadmin \
+      --user root \
+      --restart unless-stopped \
+      jenkins/jenkins:lts
+
+  # ----------------------------------------------------------
+  # ATTENDRE QUE JENKINS SOIT PRÊT
+  # ----------------------------------------------------------
+  - echo " Attente du démarrage de Jenkins (60 secondes)..."
+  - sleep 60
+
+  # ----------------------------------------------------------
+  # DOCKER DANS JENKINS 
+  # ----------------------------------------------------------
+  - |
+    docker exec -u root jenkins bash -c "
+      apt-get update -q 2>/dev/null || true
+      apt-get install -y docker.io 2>/dev/null || true
+      chmod 666 /var/run/docker.sock
+      mkdir -p /var/lib/jenkins/.docker
+      chown jenkins:jenkins /var/lib/jenkins/.docker
+    "
+
+  # ----------------------------------------------------------
+  # RÉCUPÉRER L'URL NGROK APRÈS LE DÉMARRAGE
+  # ----------------------------------------------------------
+  - |
+    sleep 5
+    NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['tunnels'][0]['public_url'] if data.get('tunnels') else '')" 2>/dev/null)
+    echo " URL ngrok pour Jenkins : $NGROK_URL" >> /var/log/openlab-init.log
+
+  # ----------------------------------------------------------
+  # CONFIGURER JENKINS AVEC L'URL NGROK
+  # ----------------------------------------------------------
+  - |
+    NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['tunnels'][0]['public_url'] if data.get('tunnels') else '')" 2>/dev/null)
+    
+    if [ -n "$NGROK_URL" ]; then
+      docker exec -u root jenkins bash -c "
+        mkdir -p /var/lib/jenkins
+        cat > /var/lib/jenkins/config.xml << 'EOF'
+    <?xml version='1.1' encoding='UTF-8'?>
+    <jenkins>
+      <installStateName>NEW</installStateName>
+      <numExecutors>2</numExecutors>
+      <mode>NORMAL</mode>
+      <useSecurity>false</useSecurity>
+      <authorizationStrategy class=\"hudson.security.AuthorizationStrategy\$Unsecured\"/>
+      <securityRealm class=\"hudson.security.SecurityRealm\$None\"/>
+      <jenkinsUrl>$NGROK_URL</jenkinsUrl>
+    </jenkins>
+    EOF
+    "
+      docker restart jenkins
+      sleep 15
+      echo " Jenkins configuré avec URL: $NGROK_URL" >> /var/log/openlab-init.log
+    else
+      echo " ngrok non disponible - utiliser Poll SCM" >> /var/log/openlab-init.log
+    fi
+
+  # ----------------------------------------------------------
+  # RÉCUPÉRER LE MOT DE PASSE JENKINS ET CRÉER INFO.txt
+  # ----------------------------------------------------------
+  - |
+    sleep 10
+    PASS=$(docker exec jenkins cat /var/lib/jenkins/secrets/initialAdminPassword 2>/dev/null || echo "Non disponible")
+    NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['tunnels'][0]['public_url'] if data.get('tunnels') else '')" 2>/dev/null)
+    
+    cat > /home/labadmin/INFO.txt << EOF
+    ============================================
+    OpenLab VM - Informations de connexion
+    ============================================
+    
+     URL Jenkins : $NGROK_URL
+     Mot de passe Jenkins : $PASS
+    
+     Projet : /home/labadmin/sentiment-ai
+    
+     Outils installés :
+      - Docker CE + Compose
+      - Git + GitHub CLI
+      - Make
+      - Terraform
+      - ngrok
+      - Jenkins
+    
+     Commandes utiles :
+      docker ps
+      docker logs jenkins
+      cat /home/labadmin/ngrok.log
+      cd /home/labadmin/sentiment-ai && make test
+    
+     Pour configurer Jenkins :
+      1. Ouvrir : $NGROK_URL
+      2. Mot de passe : $PASS
+      3. Installer les plugins suggérés
+      4. Créer un compte admin
+      5. Ajouter credentials GitHub (github-token)
+    
+     Pour le webhook GitHub :
+      Payload URL : $NGROK_URL/github-webhook/
+    ============================================
+    EOF
+    
+    chown labadmin:labadmin /home/labadmin/INFO.txt
+
+  # ----------------------------------------------------------
+  # VÉRIFICATION FINALE
+  # ----------------------------------------------------------
+  - |
+    echo "=== Cloud-init provisioning done ===" >> /var/log/openlab-init.log
+    echo "Docker:      $(docker --version)" >> /var/log/openlab-init.log
+    echo "Compose:     $(docker compose version)" >> /var/log/openlab-init.log
+    echo "Git:         $(git --version)" >> /var/log/openlab-init.log
+    echo "Make:        $(make --version | head -1)" >> /var/log/openlab-init.log
+    echo "GitHub CLI:  $(gh --version | head -1)" >> /var/log/openlab-init.log
+    echo "Terraform:   $(terraform --version | head -1)" >> /var/log/openlab-init.log
+    echo "ngrok:       $(ngrok --version)" >> /var/log/openlab-init.log
+    NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['tunnels'][0]['public_url'] if data.get('tunnels') else '')" 2>/dev/null)
+    echo " ngrok URL: $NGROK_URL" >> /var/log/openlab-init.log
+    PASS=$(docker exec jenkins cat /var/lib/jenkins/secrets/initialAdminPassword 2>/dev/null || echo "Non disponible")
+    echo " Jenkins Password: $PASS" >> /var/log/openlab-init.log
+    echo " Infos complètes : cat /home/labadmin/INFO.txt" >> /var/log/openlab-init.log
+    echo "Date:        $(date)" >> /var/log/openlab-init.log
+
+  # ----------------------------------------------------------
+  # MESSAGE MOTD POUR CONNEXION SSH
+  # ----------------------------------------------------------
+  - |
+    cat > /etc/motd << 'EOF'
+    ============================================
+     OpenLab VM - Prête pour le développement
+    
+     Outils installés :
+      - Docker CE + Compose
+      - Git + GitHub CLI
+      - Make
+      - Terraform
+      - ngrok
+      - Jenkins (Docker)
+    
+     Toutes les infos :
+      cat /home/labadmin/INFO.txt
+    
+     Commandes utiles :
+      docker ps
+      docker logs jenkins
+      docker logs -f jenkins   (logs en temps réel)
+      
+      cd /home/labadmin/sentiment-ai
+      make test
+      
+      cat /home/labadmin/ngrok.log
+      curl http://localhost:4040/api/tunnels | jq
+    ============================================
+    EOF
+
+final_message: "OpenLab VM prête. Docker, Git, Make, GitHub CLI, Terraform, ngrok et Jenkins installés. Consultez /home/labadmin/INFO.txt pour les accès. Durée : $UPTIME secondes."
+```
+
+- Ligne à modifier : su - labadmin -c "ngrok config add-authtoken METTRE_VOTRE_TOKEN_NGROK_ICI"
+- git clone https://github.com/dev/sentiment-ai.git : mettez votre vrai URL du projet dans Github.
+
+
+### Étape 2 - Créer le backend Terraform (Storage Account)
+
+Le state Terraform est stocké dans Azure pour persister entre les sessions Cloud Shell.
+
+```powershell
+chmod +x ./setup-backend.sh
+./setup-backend.sh
+```
+
+Le script affiche le nom du Storage Account généré (ex. `openlabtfstate42871`). Il met à jour `backend.tf` automatiquement.
+
+Si le Storage Account existe déjà, vérifiez son nom et mettez à jour `backend.tf` :
+
+```powershell
+az storage account list --resource-group OpenLab-TFState-RG --query "[].name" -o tsv
+```
+
+Pour déployer **sans backend distant**, supprimez simplement `backend.tf` avant de lancer `terraform init`. Le state sera créé localement dans `terraform.tfstate`.
+
+### Étape 3 - Déployer l'infrastructure
+
+```powershell
+terraform init && terraform fmt && terraform validate && terraform plan && terraform apply -auto-approve
+```
+
+Terraform crée automatiquement :
+- Une paire de clés RSA 4096 bits (provider `tls`)
+- 10 ressources Azure (RG, VNet, Subnet, NSG, IP, NIC, Managed Disk, VM, attachements)
+- La VM injecte `cloud-init.yaml` → Docker, Jenkins, ngrok, GitHub CLI, Terraform s'installent au premier démarrage (~5 min)
+
+### Étape 4 - Télécharger la clé SSH
+
+```powershell
+download ./openlab_rsa
+```
+
+### Étape 5 - Se connecter à la VM
+
+```powershell
+# Depuis Windows PowerShell
+ssh -i "C:\Users\dev\Downloads\openlab_rsa" labadmin@<PUBLIC_IP>
+```
+
+Récupérez l'IP publique à tout moment :
+
+```powershell
+terraform output public_ip_address
+```
+
+---
+
+## Partie 2 - Configuration manuelle après déploiement
+
+Se connecter en SSH à la VM avant de commencer ces étapes.  
+Attendre **5 à 8 minutes** après la première connexion SSH pour que cloud-init termine.
+
+### Vérifier l'état du provisionnement
+
+```bash
+# Suivre l'avancement cloud-init en temps réel
+sudo tail -f /var/log/cloud-init-output.log
+
+# Consulter le log de fin de provisionnement
+cat /var/log/openlab-init.log
+
+# Lire le fichier d'informations généré automatiquement
+cat /home/labadmin/INFO.txt
+```
+
+`INFO.txt` contient l'URL Jenkins (ngrok), le mot de passe initial et toutes les commandes utiles.
+
+### Vérifier que Jenkins tourne
+
+```bash
+docker ps
+# Doit afficher le conteneur "jenkins" en statut "Up"
+
+docker logs jenkins --tail 20
+# Vérifier la ligne : "Jenkins is fully up and running"
+```
+
+---
+
+### Étape 1 - Récupérer le mot de passe Jenkins
+
+```bash
+docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+Ouvrez Jenkins dans votre navigateur via l'URL ngrok affichée dans `INFO.txt` (format `https://xxxx.ngrok-free.app`).
+
+Collez le mot de passe récupéré, puis choisissez **Install suggested plugins**.
+
+---
+
+### Étape 2 - Installer les plugins Jenkins
+
+Dans Jenkins : **Administrer Jenkins → Plugins → Available plugins**
+
+Rechercher et installer :
+
+- `Docker Pipeline`
+- `Git`
+- `Pipeline`
+- `Blue Ocean` (optionnel)
+
+Redémarrer Jenkins si demandé.
+
+---
+
+### Étape 3 - Configurer les credentials GitHub
+
+**Créer un token GitHub** (si pas déjà fait) :
+
+GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token
+
+Permissions requises : `repo`, `read:packages`, `write:packages`
+
+**Enregistrer le token dans Jenkins** :
+
+Jenkins → **Administrer Jenkins → Credentials → System → Global credentials → Add Credentials**
+
+| Champ | Valeur |
+|---|---|
+| Kind | Username with password |
+| Username | `votre pseudo github` (votre pseudo GitHub) |
+| Password | Votre token GitHub |
+| ID | `github-token` |
+| Description | `GitHub token for sentiment-ai` |
+
+Cliquer **Create**.
+
+---
+
+### Étape 4 - Créer le job Jenkins
+
+Jenkins → **Nouveau Item** → Nom : `sentiment-ai-pipeline` → **Pipeline** → OK
+
+Configurer :
+
+| Section | Champ | Valeur |
+|---|---|---|
+| General | GitHub project | `https://github.com/dspitech/sentiment-ai` |
+| Build Triggers | - | `GitHub hook trigger for GITScm polling` |
+| Pipeline | Definition | `Pipeline script from SCM` |
+| Pipeline | SCM | `Git` |
+| Pipeline | Repository URL | `https://github.com/dspitech/sentiment-ai.git` |
+| Pipeline | Credentials | `github-token` |
+| Pipeline | Branch | `*/main` |
+| Pipeline | Script Path | `Jenkinsfile` |
+
+Cliquer **Save**.
+
+---
+
+### Étape 5 - Vérifier et relancer ngrok si nécessaire
+
+Si l'URL ngrok n'est plus disponible ou a changé :
+
+```bash
+# Arrêter les anciennes instances
+pkill ngrok 2>/dev/null
+
+# Relancer ngrok
+nohup ngrok http 8080 --log=stdout --log-level=info > ~/ngrok.log 2>&1 &
+
+# Attendre le démarrage
+sleep 5
+
+# Récupérer la nouvelle URL
+NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c \
+  "import sys, json; data=json.load(sys.stdin); \
+   print(data['tunnels'][0]['public_url'] if data.get('tunnels') else 'Non disponible')")
+echo "URL Jenkins : $NGROK_URL"
+```
+
+Si ngrok n'est pas disponible, configurez **Poll SCM** dans le job Jenkins à la place du webhook : Schedule `H/5 * * * *` (déclenchement toutes les 5 minutes).
+
+---
+
+### Étape 6 - Configurer le webhook GitHub
+
+1. Ouvrir : `https://github.com/dspitech/sentiment-ai/settings/hooks`
+2. Cliquer **Add webhook**
+
+| Champ | Valeur |
+|---|---|
+| Payload URL | `https://VOTRE_URL_NGROK/github-webhook/` |
+| Content type | `application/json` |
+| Which events | Just the push event |
+| Active |  coché |
+
+Cliquer **Add webhook**.
+
+---
+
+## Partie 3 - Tester le pipeline
+
+### Lancer le premier build manuellement
+
+Dans Jenkins, cliquer sur le job `sentiment-ai-pipeline` → **Build Now**.
+
+Surveiller le build : cliquer sur le numéro → **Console Output**.
+
+Le pipeline doit passer par les stages : **Checkout → Lint → Build Docker → Test → Push to GHCR**
+
+### Déclencher automatiquement via git push
+
+```bash
+cd /home/labadmin/sentiment-ai
+
+# Configurer l'identité Git (si pas encore fait)
+gh auth login
+git config --global user.name "votre prénom et nom"
+git config --global user.email "votre email"
+
+# Vérification
+git config --global --list
+
+# Modifier un fichier pour déclencher le pipeline
+echo "# Test déclenchement pipeline Jenkins" >> README.md
+
+git add README.md
+git commit -m "test: déclenchement pipeline Jenkins"
+git push origin main
+```
+
+Jenkins démarre un nouveau build automatiquement dans les secondes qui suivent le push (via webhook) ou dans les 5 minutes suivantes (via Poll SCM).
+
+---
+
+## Commandes utiles
+
+```bash
+# État général
+docker ps                          # Conteneurs en cours d'exécution
+cat /home/labadmin/INFO.txt        # Infos de connexion (URL Jenkins, mot de passe)
+cat /var/log/openlab-init.log      # Log de provisionnement cloud-init
+
+# Jenkins
+docker logs jenkins                # Logs Jenkins
+docker logs -f jenkins             # Logs Jenkins en temps réel
+docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+
+# ngrok
+cat ~/ngrok.log                    # Logs ngrok
+curl -s http://localhost:4040/api/tunnels | jq  # URL publique ngrok
+
+# Projet SentimentAI
+cd /home/labadmin/sentiment-ai
+make test                          # Lancer les tests
+make build                         # Builder l'image Docker
+docker compose up -d               # Démarrer la stack
+
+# Disque de données
+df -h /data                        # Vérifier le montage
+
+# Versions installées
+docker --version
+docker compose version
+git --version
+gh --version
+terraform --version
+ngrok --version
+```
+
+---
+
+## Détruire l'infrastructure
+
+```bash
+terraform destroy -auto-approve
+```
+
+Le Resource Group du backend (`OpenLab-TFState-RG`) et le Storage Account ne sont **pas** supprimés par `terraform destroy`. Pour les supprimer manuellement :
+>
+> ```powershell
+> az group delete --name OpenLab-TFState-RG --yes --no-wait
+> ```
+
+---
+
+## Dépannage
+
+| Symptôme | Cause probable | Solution |
+|---|---|---|
+| `docker ps` ne montre pas Jenkins | cloud-init encore en cours | Attendre 5–8 min, vérifier `sudo tail -f /var/log/cloud-init-output.log` |
+| `Permission denied` sur docker.sock | Permissions socket manquantes | `docker exec -u root jenkins chmod 666 /var/run/docker.sock` |
+| URL ngrok absente dans `INFO.txt` | ngrok pas encore démarré | Relancer manuellement avec `~/start-ngrok.sh` |
+| Jenkins inaccessible via ngrok | ngrok arrêté ou URL changée | `pkill ngrok && nohup ngrok http 8080 > ~/ngrok.log 2>&1 &` |
+| Stage Lint échoue | Erreurs flake8 dans le code Python | `pip install autopep8 && autopep8 --in-place src/*.py` |
+| Push GHCR échoue | Token GitHub expiré ou permissions insuffisantes | Régénérer un token avec `repo`, `read:packages`, `write:packages` |
+| Backend Terraform 404 | Nom Storage Account incorrect dans `backend.tf` | `az storage account list --resource-group OpenLab-TFState-RG --query "[].name" -o tsv` |
+| Timeout SSH après `terraform apply` | VM pas encore démarrée | Attendre 2 minutes avant de se connecter |
 
 ---
 
