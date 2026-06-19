@@ -2483,7 +2483,7 @@ code .
 ```yaml
 #cloud-config
 # ============================================================
-# Cloud-init — Provisionnement automatique au premier démarrage
+# Cloud-init - Provisionnement automatique au premier démarrage
 # Installe : Docker CE + Docker Compose + Git + Make + GitHub CLI + ngrok + Terraform
 # Tous les services sont configurés avec les bonnes permissions
 # Installation Docker CE + Compose	
@@ -4640,7 +4640,7 @@ e2c5f88 feat: initial SentimentAI application with Docker setup
 Les messages suivent la convention **Conventional Commits** : `type(scope): description` où `type` est `feat`, `fix`, `ci`, `test`, `docs`, `refactor`, etc.
 
 ---
-# TP 4 — Terraform & Infrastructure as Code
+# TP 4 - Terraform & Infrastructure as Code
 
 
 Provisionner l'environnement staging de SentimentAI avec Terraform
@@ -4733,7 +4733,7 @@ EOF
 ```
 ![image](https://hackmd.io/_uploads/HyOHYpMzGg.png)
 
->  **Important — à faire avant le premier `terraform init`**
+>  **Important - à faire avant le premier `terraform init`**
 >
 > - `.terraform/` contient les **plugins providers** téléchargés (binaires lourds, inutiles à versionner).
 > - `*.tfstate` et `*.tfstate.backup` contiennent l'**état de l'infrastructure** : IDs de ressources, parfois des secrets. Ce fichier ne doit **jamais** être dans Git en production (utiliser un backend distant comme S3 à la place).
@@ -4751,13 +4751,13 @@ Version : v1.15.6
 
 Pourquoi ajoute-t-on `.terraform/` dans `.gitignore` ? Que contient ce dossier après `terraform init` ?
 
-**Réponse :** Après `terraform init`, `.terraform/` contient les binaires des providers téléchargés (ici `kreuzwerker/docker`). Ces binaires sont compilés pour l'OS courant, volumineux, et régénérables à la demande — les committer alourdirait le dépôt inutilement.
+**Réponse :** Après `terraform init`, `.terraform/` contient les binaires des providers téléchargés (ici `kreuzwerker/docker`). Ces binaires sont compilés pour l'OS courant, volumineux, et régénérables à la demande - les committer alourdirait le dépôt inutilement.
 
 ---
 
 ## 2. Écrire les Fichiers HCL
 
-### 2.1 Configurer le provider Docker — `infra/main.tf`
+### 2.1 Configurer le provider Docker - `infra/main.tf`
 
 Avant d'écrire le fichier, vérifiez l'emplacement du socket Docker :
 
@@ -4793,15 +4793,15 @@ EOF
 
 **Rôle du provider Docker**
 
-Le provider `kreuzwerker/docker` est un **plugin Terraform** qui communique avec le daemon Docker via le socket Unix — exactement comme Docker Compose, mais de façon déclarative.
+Le provider `kreuzwerker/docker` est un **plugin Terraform** qui communique avec le daemon Docker via le socket Unix - exactement comme Docker Compose, mais de façon déclarative.
 
 - `source = "kreuzwerker/docker"` : identifiant du provider dans le registre Terraform public.
-- `version = "~> 3.0"` : opérateur pessimiste — accepte `3.0`, `3.1`, `3.x`… mais pas `4.0`. Protège contre les breaking changes.
+- `version = "~> 3.0"` : opérateur pessimiste - accepte `3.0`, `3.1`, `3.x`… mais pas `4.0`. Protège contre les breaking changes.
 - `terraform init` télécharge ce provider dans `.terraform/` (ignoré par Git).
 
 ---
 
-### 2.2 Déclarer les variables — `infra/variables.tf`
+### 2.2 Déclarer les variables - `infra/variables.tf`
 
 ```bash
 cat > infra/variables.tf << 'EOF'
@@ -4848,7 +4848,7 @@ EOF
 
 ---
 
-### 2.3 Déclarer les ressources — suite de `infra/main.tf`
+### 2.3 Déclarer les ressources - suite de `infra/main.tf`
 
 ```bash
 cat >> infra/main.tf << 'EOF'
@@ -4905,7 +4905,7 @@ EOF
 > Crée (ou référence) le réseau `cicd-network` partagé entre Jenkins, SonarQube et SentimentAI. Si ce réseau existe déjà depuis le TP2, voir la section 3.3 pour l'importer dans le state.
 >
 > **`docker_image "sentiment"`**
-> - `name = "sentiment-ai:${var.image_tag}"` : référence l'image locale buildée par Jenkins — pas de `docker pull` depuis un registry distant, donc pas d'authentification nécessaire.
+> - `name = "sentiment-ai:${var.image_tag}"` : référence l'image locale buildée par Jenkins - pas de `docker pull` depuis un registry distant, donc pas d'authentification nécessaire.
 > - `keep_locally = true` : indique à Terraform de **ne pas supprimer l'image locale** lors d'un `terraform destroy`. Sans ce paramètre, `destroy` effacerait l'image de votre machine.
 >
 > **`docker_container "sentiment_staging"`**
@@ -4915,7 +4915,7 @@ EOF
 
 ---
 
-### 2.4 Déclarer les outputs — `infra/outputs.tf`
+### 2.4 Déclarer les outputs - `infra/outputs.tf`
 
 ```bash
 cat > infra/outputs.tf << 'EOF'
@@ -4996,7 +4996,7 @@ terraform validate
 ![image](https://hackmd.io/_uploads/r1W166Gzfx.png)
 
 
-> - `terraform fmt` : reformate les fichiers `.tf` selon le style officiel HCL (indentation, alignement). Idempotent — peut être intégré en pre-commit hook.
+> - `terraform fmt` : reformate les fichiers `.tf` selon le style officiel HCL (indentation, alignement). Idempotent - peut être intégré en pre-commit hook.
 > - `terraform validate` : vérifie la **syntaxe et la cohérence** de la configuration (références valides, types corrects) sans aucun appel au daemon Docker. Rapide, utile en CI sur toutes les branches.
 
 ---
@@ -5140,7 +5140,7 @@ docker exec jenkins terraform version
 
 
 
-### 4.2 Jenkinsfile — Pipeline 10 stages complet
+### 4.2 Jenkinsfile - Pipeline 10 stages complet
 
 ```bash
 cat > Jenkinsfile << 'EOF'
@@ -5222,7 +5222,7 @@ SCRIPT_EOF
 ![image](https://hackmd.io/_uploads/H16bhlQMGg.png)
 
 
-> **IaC Validate vs IaC Apply — deux rôles distincts**
+> **IaC Validate vs IaC Apply - deux rôles distincts**
 >
 > | Stage | Branches | Commandes | Objectif |
 > |---|---|---|---|
@@ -5257,7 +5257,7 @@ Faites un screenshot du pipeline Jenkins avec les 10 stages tous verts.
 
 Pourquoi `IaC Validate` s'exécute sur toutes les branches mais `IaC Apply` seulement sur `main` ?
 
-**Réponse :** `IaC Validate` est une vérification syntaxique légère (Fail Fast) : détecter une erreur HCL dès une feature branch évite de la découvrir sur `main`. `IaC Apply` provisionne de vraies ressources — le limiter à `main` garantit qu'on ne crée jamais d'environnement staging à partir d'un code non validé par la Quality Gate et non mergé.
+**Réponse :** `IaC Validate` est une vérification syntaxique légère (Fail Fast) : détecter une erreur HCL dès une feature branch évite de la découvrir sur `main`. `IaC Apply` provisionne de vraies ressources - le limiter à `main` garantit qu'on ne crée jamais d'environnement staging à partir d'un code non validé par la Quality Gate et non mergé.
 
 ###  Question 4.3
 
@@ -5267,7 +5267,7 @@ Pourquoi `IaC Validate` s'exécute sur toutes les branches mais `IaC Apply` seul
 
 ---
 
-## 5. Pour aller plus loin — Autres Environnements
+## 5. Pour aller plus loin - Autres Environnements
 
 Ce TP utilise le Docker provider pour apprendre Terraform sans compte cloud. En entreprise, le **même workflow** s'applique en changeant uniquement le provider.
 
@@ -5292,7 +5292,7 @@ Le changement est minimal : remplacer le bloc `provider "docker"` par `provider 
 
 ### 5.3 Adaptation de SentimentAI
 
-Seuls 3 fichiers changent pour porter SentimentAI en production — le code applicatif et les TPs précédents restent intacts :
+Seuls 3 fichiers changent pour porter SentimentAI en production - le code applicatif et les TPs précédents restent intacts :
 
 | Fichier | TP4 (Docker local) | Production (ex: AWS) |
 |---|---|---|
