@@ -5305,6 +5305,913 @@ Seuls 3 fichiers changent pour porter SentimentAI en production - le code applic
 
 ---
 
+# TP 5 — Monitoring & Observabilité
+
+Exposer les métriques de SentimentAI et les visualiser dans Grafana  
+**Outils :** Prometheus · Grafana · FastAPI · Jenkins · Terraform · Docker
+
+---
+
+## Objectif
+
+Ajouter une couche d'observabilité complète à SentimentAI (déployé en staging via Terraform au TP4) :
+
+1. L'API expose ses métriques sur `GET /metrics` (format Prometheus)
+2. Prometheus scrape ces métriques automatiquement toutes les **15 secondes**
+3. Grafana les visualise avec des dashboards en temps réel
+4. Un smoke test Jenkins vérifie que tout fonctionne après chaque déploiement
+
+---
+
+## Prérequis
+
+- SentimentAI déployé en staging (TP4, réseau `cicd-network` existant)
+- Environnement virtuel Python actif (`source venv/bin/activate`)
+- Docker et Docker Compose installés
+
+---
+
+## 1. Exposer les Métriques dans FastAPI
+
+### 1.1 Installer les dépendances
+
+Ajoutez ces lignes à `requirements.txt` :
+
+```
+cat <<EOF >> requirements.txt
+prometheus-fastapi-instrumentator==6.1.0
+prometheus-client==0.19.0
+EOF
+```
+![image](https://hackmd.io/_uploads/SJmGb-7zGx.png)
+
+- Corriger les permissions 
+
+```bash
+ls -ld ~/.local
+sudo chown -R $USER:$USER ~/.local
+```
+![image](https://hackmd.io/_uploads/SJlzGZQMGl.png)
+
+Puis installez :
+
+```bash
+pip install -r requirements.txt
+```
+![image](https://hackmd.io/_uploads/rJRrMbQzGg.png)
+
+
+> **Vérification du venv**  
+> Avant d'installer, assurez-vous que votre environnement virtuel est actif :
+> ```bash
+> which python3
+> which pip
+> # Les deux doivent pointer vers .venv/bin/... ou venv/bin/...
+> # et NON vers un Python système (/usr/bin, /Library/Frameworks, anaconda3...)
+> ```
+![image](https://hackmd.io/_uploads/rkRdMW7GGg.png)
+
+> Si ce n'est pas le cas : `source venv/bin/activate`
+
+Pour que python3 et pip pointent vers votre dossier local de projet, vous devez créer et activer un environnement virtuel.
+
+```bash
+sudo apt update
+sudo apt install python3.10-venv
+python3 -m venv venv
+source venv/bin/activate
+```
+
+### 1.2 Instrumenter l'application
+
+Modifiez `src/main.py` pour exposer les métriques HTTP automatiquement et les métriques métier SentimentAI :
+
+```bash
+cat <<'EOF' > src/main.py
+from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import Counter, Gauge, Histogram
+from src.schemas import PredictionRequest, PredictionResponse
+from src.model import SentimentModel
+import time
+
+app = FastAPI(title="SentimentAI", version="0.1.0")
+model = SentimentModel()
+
+# Métriques métier SentimentAI
+predictions_total = Counter(
+    "sentiment_predictions_total",
+    "Nombre total de prédictions",
+    ["label", "status"]  # ex: label=POSITIVE, status=ok
+)
+
+confidence_gauge = Gauge(
+    "sentiment_confidence_score",
+    "Score de confiance de la dernière prédiction",
+    ["label"]
+)
+
+prediction_duration = Histogram(
+    "sentiment_prediction_duration_seconds",
+    "Durée des prédictions en secondes",
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5]
+)
+
+# Instrumentation automatique HTTP (expose GET /metrics)
+Instrumentator().instrument(app).expose(app)
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.post("/predict", response_model=PredictionResponse)
+def predict(request: PredictionRequest):
+    start = time.time()
+    try:
+        result = model.predict(request.text)
+        duration = time.time() - start
+        predictions_total.labels(label=result["label"], status="ok").inc()
+        confidence_gauge.labels(label=result["label"]).set(result["score"])
+        prediction_duration.observe(duration)
+        return result
+    except Exception:
+        predictions_total.labels(label="UNKNOWN", status="error").inc()
+        raise
+EOF
+```
+![image](https://hackmd.io/_uploads/S1SH4WmGfx.png)
+
+
+> **Ce que fait `Instrumentator().instrument(app).expose(app)` :**  
+> Ajoute automatiquement les métriques HTTP suivantes :
+> - `http_requests_total{method, handler, status}` → Counter
+> - `http_request_duration_seconds{method, handler}` → Histogram  
+> Et expose `GET /metrics` au format texte Prometheus.  
+> Les métriques métier (`predictions_total`, etc.) sont ajoutées **manuellement** pour mesurer la logique applicative spécifique à SentimentAI.
+
+### 1.3 Tester l'exposition des métriques
+
+```bash
+# Lancer l'app localement
+python3 -m uvicorn src.main:app --reload --port 8000
+
+# En d'erreur :
+pip install --upgrade pip
+pip install -r requirements.txt
+which uvicorn
+```
+![image](https://hackmd.io/_uploads/ryNMS-mMGe.png)
+
+
+```bash
+# Dans un autre terminal — vérifier /metrics
+curl -s http://localhost:8000/metrics | grep sentiment
+```
+![image](https://hackmd.io/_uploads/HyEyUWXzGg.png)
+
+```bash
+# Envoyer une prédiction pour incrémenter les compteurs
+curl -s -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Excellent produit"}'
+```
+![image](https://hackmd.io/_uploads/r18MI-7GMx.png)
+![image](https://hackmd.io/_uploads/B1GQLb7Mfx.png)
+
+```bash
+# Re-vérifier — le counter doit avoir augmenté
+curl -s http://localhost:8000/metrics | grep sentiment_predictions_total
+```
+![image](https://hackmd.io/_uploads/B1iBIbmMGg.png)
+
+---
+
+### Questions — Section 1
+
+#### Question 1.1
+Faites un screenshot de `curl /metrics` montrant vos métriques `sentiment_predictions_total` et `sentiment_confidence_score`.
+
+![image](https://hackmd.io/_uploads/Sk9_IbQGMx.png)
+
+
+**Réponse :** Après avoir lancé l'app et envoyé au moins une requête `POST /predict`, la commande `curl -s http://localhost:8000/metrics | grep sentiment` doit retourner quelque chose comme :
+
+```
+# HELP sentiment_predictions_total Nombre total de prédictions
+# TYPE sentiment_predictions_total counter
+sentiment_predictions_total{label="POSITIVE",status="ok"} 1.0
+# HELP sentiment_confidence_score Score de confiance de la dernière prédiction
+# TYPE sentiment_confidence_score gauge
+sentiment_confidence_score{label="POSITIVE"} 0.9876
+```
+
+*(Fournir un screenshot de ce résultat dans votre rendu.)*
+![image](https://hackmd.io/_uploads/r1ijI-7Mfg.png)
+
+---
+
+#### Question 1.2
+Quelle est la différence entre un **Counter** et un **Gauge** ? Donnez un exemple de chaque dans votre code.
+
+**Réponse :**
+
+| Type | Comportement | Exemple dans le code |
+|------|-------------|----------------------|
+| **Counter** | Valeur **monotone croissante** — elle ne peut qu'augmenter ou être remise à zéro au redémarrage du processus | `predictions_total` : compte le nombre total de prédictions effectuées depuis le démarrage de l'app |
+| **Gauge** | Valeur **arbitraire** — elle peut monter ou descendre librement | `confidence_gauge` : reflète le score de confiance de la *dernière* prédiction, qui varie entre 0 et 1 |
+
+En résumé : un Counter mesure un **cumul** (nombre d'événements), un Gauge mesure un **état instantané** (une valeur courante).
+
+---
+
+#### Question 1.3
+À quoi sert le label `status='ok'` dans `predictions_total` ? Quel serait l'intérêt d'avoir aussi un `status='error'` ?
+
+**Réponse :**
+
+Le label `status='ok'` permet de **distinguer les prédictions réussies des prédictions en erreur** au sein d'un même counter. Cela évite d'avoir deux counters séparés et permet des requêtes PromQL comme :
+
+
+Avoir `status='error'` est crucial pour :
+- **Alerter** dès que le taux d'erreurs dépasse un seuil
+- **Corréler** les erreurs avec des déploiements ou des pics de trafic
+- **Séparer** les métriques de disponibilité des métriques de performance
+
+Sans ce label, il serait impossible de différencier une prédiction réussie d'une exception dans les dashboards.
+
+---
+
+## 2. Installer Prometheus
+
+### 2.1 Créer la configuration Prometheus
+
+```bash
+mkdir -p monitoring
+touch monitoring/prometheus.yml monitoring/alerts.yml
+```
+![image](https://hackmd.io/_uploads/BkLDDbXMze.png)
+
+**`monitoring/prometheus.yml` :**
+
+```bash
+cat <<'EOF' > monitoring/prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - 'alerts.yml'
+
+scrape_configs:
+  - job_name: 'sentiment-ai'
+    static_configs:
+      - targets:
+          - 'sentiment-staging:8000'  # nom DNS Docker
+    metrics_path: /metrics
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+EOF
+```
+![image](https://hackmd.io/_uploads/rJP3PbXGfl.png)
+
+
+**`monitoring/alerts.yml` :**
+
+```bash
+cat <<'EOF' > monitoring/alerts.yml
+groups:
+  - name: sentimentai
+    rules:
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99,
+            rate(sentiment_prediction_duration_seconds_bucket[5m])
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Latence p99 elevee sur SentimentAI'
+
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m])
+          / rate(http_requests_total[5m]) * 100 > 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Taux d'erreurs 5xx > 5%"
+
+      - alert: LowConfidenceScore
+        expr: avg(sentiment_confidence_score) < 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Modele peu confiant - verifier le drift'
+EOF
+```
+![image](https://hackmd.io/_uploads/BkUZO-7zMx.png)
+
+
+### 2.2 Lancer la stack monitoring
+
+Créez `monitoring/docker-compose.yml` :
+
+```bash
+cat <<'EOF' > monitoring/docker-compose.yml
+version: '3.9'
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports: ['9090:9090']
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    networks: [cicd-network]
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports: ['3000:3000']
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks: [cicd-network]
+    restart: unless-stopped
+
+networks:
+  cicd-network:
+    external: true  # créé par Terraform (TP4)
+
+volumes:
+  prometheus_data:
+  grafana_data:
+EOF
+```
+![image](https://hackmd.io/_uploads/Hy38ubXGGe.png)
+
+
+**Note :** `monitoring/docker-compose.yml` est **indépendant** du `docker-compose.yml` de SentimentAI à la racine du projet. Les deux coexistent sans conflit (ports différents, réseau partagé via `external: true`). Ne modifiez pas le `docker-compose.yml` existant.
+
+```bash
+# Lancer la stack
+cd monitoring/
+docker compose up -d
+
+# Vérifier
+docker ps | grep -E 'prometheus|grafana'
+
+# Accès :
+# Prometheus : http://localhost:9090
+# Grafana    : http://localhost:3000  (admin / admin)
+```
+![image](https://hackmd.io/_uploads/rJp5_WQGzx.png)
+![image](https://hackmd.io/_uploads/SJOhOWXzMe.png)
+
+
+### 2.3 Vérifier les targets Prometheus
+
+**Attention :** Si le conteneur `sentiment-staging` a été créé par Terraform **avant** vos modifications de `src/main.py`, il faut rebuilder l'image et relancer Terraform :
+
+```bash
+# Rebuilder l'image avec le code à jour (incluant /metrics)
+docker build -t sentiment-ai:latest .
+
+# Recréer le conteneur staging avec la nouvelle image
+cd infra/
+terraform apply -auto-approve-auto-approve
+```
+![image](https://hackmd.io/_uploads/H1mS5-XGGx.png)
+![image](https://hackmd.io/_uploads/SyFYFWmMGe.png)
+
+
+
+**Symptôme si l'image n'est pas à jour :** Prometheus affiche `sentiment-ai DOWN` avec l'erreur `"server returned HTTP status 404 Not Found"` sur `http://sentiment-staging:8000/metrics`.
+
+```bash
+# Via l'API Prometheus — sentiment-ai doit être UP
+curl -s http://localhost:9090/api/v1/targets | \
+  python3 -m json.tool | grep health
+# Résultat attendu : "health": "up"
+
+# Tester une requête PromQL dans l'interface Prometheus
+# http://localhost:9090 -> Graph -> Expression :
+# rate(http_requests_total[1m])
+```
+![image](https://hackmd.io/_uploads/SyjWj-mGGx.png)
+![image](https://hackmd.io/_uploads/SJtUoZ7Gfg.png)
+![image](https://hackmd.io/_uploads/rkHPfGXGGg.png)
+
+
+---
+
+### Questions — Section 2
+
+#### Question 2.1
+> Faites un screenshot de `http://localhost:9090/targets` montrant `sentiment-ai` avec le statut **UP**.
+
+**Réponse :** La page `/targets` de Prometheus liste tous les jobs configurés dans `prometheus.yml`. Le job `sentiment-ai` doit apparaître en vert avec `State: UP`. Si le statut est `DOWN`, vérifier que le conteneur `sentiment-staging` tourne bien avec l'endpoint `/metrics` exposé (cf. section 2.3).
+
+*(Fournir un screenshot de cette page dans votre rendu.)*
+![image](https://hackmd.io/_uploads/SJGmzfmfzg.png)
+
+---
+
+#### Question 2.2
+Dans Prometheus (Graph), tapez `rate(http_requests_total[1m])`. Faites un screenshot du résultat après avoir envoyé quelques requêtes à `/predict`. Si le résultat est vide (`Empty query result`), qu'est-ce que cela signifie ?
+![image](https://hackmd.io/_uploads/BytWQGXMzl.png)
+
+
+**Réponse :**
+
+Un résultat vide (`Empty query result`) signifie que **Prometheus n'a pas encore collecté de données** pour cette métrique. Les causes possibles sont :
+
+- Le conteneur `sentiment-staging` n'a pas encore été scrappé (attendre le prochain cycle de 15 s)
+- L'endpoint `/metrics` n'est pas accessible depuis Prometheus (target `DOWN`)
+- Aucune requête n'a encore été envoyée à `/predict` (le counter `http_requests_total` n'existe pas encore car Prometheus n'expose les métriques qu'après le premier événement)
+
+Solution : envoyer quelques requêtes `POST /predict`, attendre ~30 s, puis relancer la requête PromQL.
+
+*(Fournir un screenshot du graphe avec des données dans votre rendu.)*
+
+---
+
+#### Question 2.3
+> Pourquoi utilise-t-on `sentiment-staging:8000` comme target plutôt que `localhost:8000` ?
+
+**Réponse :**
+
+Prometheus tourne dans un **conteneur Docker** distinct. Dans ce contexte, `localhost` fait référence au réseau interne du conteneur Prometheus lui-même — pas à la machine hôte ni aux autres conteneurs.
+
+`sentiment-staging` est le **nom DNS Docker** attribué au conteneur SentimentAI sur le réseau `cicd-network`. Docker fournit une résolution DNS interne entre conteneurs d'un même réseau, ce qui permet à Prometheus d'atteindre `sentiment-staging:8000` sans exposer le port sur la machine hôte.
+
+C'est le principe fondamental des réseaux Docker : les conteneurs se parlent **par leur nom de service**, pas par `localhost`.
+
+---
+
+## 3. Configurer Grafana
+
+### 3.1 Ajouter Prometheus comme datasource
+
+1. Ouvrez `http://localhost:3000` → login `admin / admin`
+2. Menu gauche → **Connections** → **Data sources** → **Add data source**
+3. Choisir **Prometheus**
+4. URL : `http://prometheus:9090` *(pas `localhost` !)*
+5. Cliquer **Save & Test** → message vert *"Data source is working"*
+
+![image](https://hackmd.io/_uploads/Bk7_4zmfGx.png)
+![image](https://hackmd.io/_uploads/rk6pSGQzGl.png)
+![image](https://hackmd.io/_uploads/ByPgIzmMMx.png)
+![image](https://hackmd.io/_uploads/SJAzUzXGfx.png)
+
+
+### 3.2 Créer le dashboard SentimentAI
+
+**Étapes pour créer chaque panel :**
+
+1. Menu gauche → **Dashboards** → bouton **New** → **New Dashboard**
+2. Cliquer **Add visualization**
+3. Sélectionner la datasource **Prometheus**
+4. Dans l'éditeur de requête (onglet **Code**, pas Builder) : coller la requête PromQL
+5. Le graphique se met à jour automatiquement
+6. Dans le panneau **Panel options** (droite) : donner un titre au panel
+7. Changer le type de visualisation si besoin (liste déroulante en haut à droite)
+8. Cliquer **Apply** pour ajouter le panel
+9. Répéter pour chacun des 4 panels
+10. Cliquer **Save dashboard** (icône disquette)
+
+![image](https://hackmd.io/_uploads/B1XrIMQffx.png)
+![image](https://hackmd.io/_uploads/B1N8IMXGzg.png)
+![image](https://hackmd.io/_uploads/HJVQwzXfGg.png)
+
+**Les 4 panels à créer :**
+
+| Panel | Type | Requête PromQL |
+|-------|------|----------------|
+| Requêtes/s | Time series | `rate(http_requests_total{handler="/predict"}[1m])` |
+| Latence p99 | Time series | `histogram_quantile(0.99, rate(sentiment_prediction_duration_seconds_bucket[5m]))` |
+| Taux erreurs | Stat | `rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100` |
+| Confiance | Gauge | `avg(sentiment_confidence_score)` |
+
+> **Types de visualisation :**  
+> - **Time series** → courbe dans le temps  
+> - **Stat** → grande valeur unique  
+> - **Gauge** → jauge circulaire ou linéaire
+
+![image](https://hackmd.io/_uploads/HyqDFz7zzl.png)
+![image](https://hackmd.io/_uploads/HkRkcM7fGx.png)
+![image](https://hackmd.io/_uploads/r156cfXzfx.png)
+![image](https://hackmd.io/_uploads/BkTR5fXMGe.png)
+
+![image](https://hackmd.io/_uploads/SJH2qG7ffl.png)
+
+### 3.3 Générer du trafic pour tester
+
+```bash
+# Envoyer 50 requêtes pour voir les métriques évoluer
+for i in $(seq 1 50); do curl -s -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"text": "Ce produit est vraiment bien"}' > /dev/null; sleep 0.5; done
+```
+![image](https://hackmd.io/_uploads/r1KK6MXzMx.png)
+
+![image](https://hackmd.io/_uploads/Sy4dTMXMzl.png)
+![image](https://hackmd.io/_uploads/rkl3pMQzzg.png)
+
+---
+
+### Questions — Section 3
+
+#### Question 3.1
+Faites un screenshot de votre dashboard Grafana avec les 4 panels affichant des données.
+![image](https://hackmd.io/_uploads/Syl6pfmMzl.png)
+
+
+**Réponse :** Après avoir généré du trafic avec la boucle ci-dessus et attendu ~30 s, les 4 panels doivent afficher des données. Le panel **Requêtes/s** montre une courbe de trafic, **Latence p99** la latence au 99e percentile, **Taux erreurs** un pourcentage (idéalement 0 %), et **Confiance** une jauge avec le score moyen du modèle.
+
+
+---
+
+#### Question 3.2
+Quelle est la requête PromQL pour calculer le percentile 99 de la latence ? Pourquoi utilise-t-on `histogram_quantile()` plutôt qu'un simple `avg()` ?
+
+**Réponse :**
+
+```promql
+histogram_quantile(0.99, rate(sentiment_prediction_duration_seconds_bucket[5m]))
+```
+
+**Pourquoi `histogram_quantile()` et pas `avg()` ?**
+
+`avg()` calcule la **moyenne** des durées, qui peut être très trompeuse : si 99 % des requêtes répondent en 50 ms mais 1 % met 10 s, la moyenne sera peut-être 150 ms — une valeur qui masque complètement le problème.
+
+`histogram_quantile(0.99, ...)` calcule le **percentile 99** : la valeur en dessous de laquelle se trouvent 99 % des observations. C'est la métrique standard en SRE/DevOps car elle révèle l'expérience des **utilisateurs les plus lents** — ceux qui souffrent vraiment d'un problème de latence.
+
+En résumé :
+- `avg()` → performance *typique* (peut cacher les outliers)
+- `histogram_quantile(0.99)` → performance dans le *pire cas plausible* (les 1 % les plus lents)
+
+---
+
+## 4. Intégration Jenkins — Pipeline 11 Stages
+
+### 4.1 Provisionner le monitoring avec Terraform
+
+Créez `infra/monitoring.tf` :
+
+```bash
+cat <<EOF > infra/monitoring.tf
+resource "docker_image" "prometheus" {
+  name         = "prom/prometheus:latest"
+  keep_locally = true
+}
+
+resource "docker_container" "prometheus" {
+  name    = "prometheus"
+  image   = docker_image.prometheus.image_id
+  restart = "unless-stopped"
+
+  networks_advanced { name = docker_network.cicd.name }
+  ports { internal = 9090; external = 9090 }
+
+  volumes {
+    host_path      = abspath("\${path.module}/../monitoring/prometheus.yml")
+    container_path = "/etc/prometheus/prometheus.yml"
+    read_only      = true
+  }
+}
+
+resource "docker_image" "grafana" {
+  name         = "grafana/grafana:latest"
+  keep_locally = true
+}
+
+resource "docker_container" "grafana" {
+  name    = "grafana"
+  image   = docker_image.grafana.image_id
+  restart = "unless-stopped"
+
+  networks_advanced { name = docker_network.cicd.name }
+  ports { internal = 3000; external = 3000 }
+  env = ["GF_SECURITY_ADMIN_PASSWORD=admin"]
+}
+EOF
+
+```
+![image](https://hackmd.io/_uploads/ByAEAGmMMl.png)
+
+
+### 4.2 Ajouter le stage Smoke Test dans le Jenkinsfile
+
+Ajoutez ce **11e stage** après `Deploy Staging` :
+
+```groovy
+stage('Smoke Test') {
+    when { branch 'main' }
+    steps {
+        sh '''
+            echo "Attente démarrage (10s)..."
+            sleep 10
+
+            # 1. L'app répond
+            curl -f http://localhost:8001/health || exit 1
+            echo "/health OK"
+
+            # 2. Les métriques sont exposées
+            curl -s http://localhost:8001/metrics | \
+              grep -q sentiment_predictions_total || exit 1
+            echo "/metrics OK -- métriques SentimentAI présentes"
+
+            # 3. Prometheus scrape l'app
+            sleep 20  # attendre au moins 1 scrape (15s)
+            curl -s "http://localhost:9090/api/v1/query?\
+query=up{job='sentiment-ai'}" | \
+              grep -q '"value":.*1' || exit 1
+            echo "Prometheus scrape sentiment-ai : UP"
+
+            # 4. Grafana répond
+            curl -f http://localhost:3000/api/health || exit 1
+            echo "Grafana OK"
+        '''
+    }
+    post {
+        failure {
+            sh 'docker logs prometheus || true'
+            sh 'docker logs sentiment-staging || true'
+            echo 'Smoke Test KO -- voir logs ci-dessus'
+        }
+    }
+}
+```
+
+#### Fichier Jenkinsfile
+
+```bash
+cat <<'EOF' > Jenkinsfile
+pipeline {
+  agent any
+
+  environment {
+    IMAGE_NAME = 'sentiment-ai'
+    REGISTRY   = 'ghcr.io/dspitech'
+    REGISTRY_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
+    SONAR_HOST_URL = 'http://4.223.165.64:9000/'
+    SONAR_USER_TOKEN = 'sqa_5e07e6f28100271b73d2b76bcbc49d72e2bc70ee'
+    DOCKER_HOST_IP  = '172.17.0.1'
+  }
+
+  stages {
+    stage('1. Checkout') { steps { checkout scm; script { env.IMAGE_TAG = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim() } } }
+    stage('2. Lint') { steps { sh 'docker run --rm -v $WORKSPACE:/app -w /app python:3.12-slim sh -c "pip install flake8 -q && flake8 ."' } }
+    stage('3. Build') { steps { sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ." } }
+    stage('4. Test') { steps { sh "docker run --name test-runner ${IMAGE_NAME}:${IMAGE_TAG} pytest tests/ -v --cov=src --cov-report=xml:/tmp/coverage.xml --cov-fail-under=70" } }
+    stage('5. Extract Coverage') { steps { sh "docker cp test-runner:/tmp/coverage.xml ./coverage.xml && docker rm -f test-runner" } }
+    stage('6. Install Scanner') { steps { sh 'if [ ! -d "$HOME/.sonar/bin" ]; then mkdir -p $HOME/.sonar; curl -sSL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip -o $HOME/.sonar/scanner.zip; unzip -q -o $HOME/.sonar/scanner.zip -d $HOME/.sonar/; mv $HOME/.sonar/sonar-scanner-5.0.1.3006-linux/* $HOME/.sonar/; rm $HOME/.sonar/scanner.zip; fi' } }
+    stage('7. Sonar Analysis') { steps { sh '$HOME/.sonar/bin/sonar-scanner -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_USER_TOKEN -Dsonar.projectKey=sentiment-ai -Dsonar.sources=src -Dsonar.python.coverage.reportPaths=coverage.xml' } }
+    stage('8. Quality Gate') { steps { sh 'STATUS=$(curl -s -u "$SONAR_USER_TOKEN:" "${SONAR_HOST_URL}api/qualitygates/project_status?projectKey=sentiment-ai" | grep -o \'"status":"[^"]*"\'); if [ "$STATUS" = \'"status":"ERROR"\' ]; then exit 1; fi' } }
+    stage('9. Push Image') { steps { sh 'docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY_IMAGE}:${IMAGE_TAG} && docker push ${REGISTRY_IMAGE}:${IMAGE_TAG}' } }
+
+    stage('10. Deploy Terraform') {
+      steps {
+        script {
+          sh """
+            docker build -t terraform-deploy -f- . <<DOCKERFILE
+FROM hashicorp/terraform:latest
+RUN apk add --no-cache docker-cli
+COPY infra/      /terraform/
+COPY monitoring/ /monitoring/
+COPY deploy.sh   /terraform/
+RUN rm -f /terraform/terraform.tfstate /terraform/terraform.tfstate.backup /terraform/.terraform.lock.hcl
+WORKDIR /terraform
+DOCKERFILE
+            docker run --rm \\
+              --entrypoint /bin/sh \\
+              -v /var/run/docker.sock:/var/run/docker.sock \\
+              -v \${HOME}/.aws:/root/.aws \\
+              -e TF_VAR_image_tag=${IMAGE_TAG} \\
+              terraform-deploy /terraform/deploy.sh
+          """
+        }
+      }
+    }
+
+    stage('11. Smoke Test') {
+      when { expression { env.GIT_BRANCH ==~ /.*main/ } }
+      steps {
+        sh '''
+          echo "Attente démarrage (10s)..."
+          sleep 10
+          curl -f http://${DOCKER_HOST_IP}:8001/health || exit 1
+          echo "/health OK"
+          curl -s http://${DOCKER_HOST_IP}:8001/metrics | grep -q sentiment_predictions_total || exit 1
+          echo "/metrics OK"
+          sleep 20
+          PROM_RESULT=$(curl -s "http://${DOCKER_HOST_IP}:9090/api/v1/query?query=up%7Bjob%3D%27sentiment-ai%27%7D")
+          echo "Prometheus response: $PROM_RESULT"
+          echo "$PROM_RESULT" | grep -q '"value"' || exit 1
+          echo "Prometheus scrape OK"
+          curl -f http://${DOCKER_HOST_IP}:3000/api/health || exit 1
+          echo "Smoke Test OK : Tous les services sont opérationnels."
+        '''
+      }
+      post {
+        failure {
+          sh 'docker logs prometheus || true'
+          sh 'docker logs sentiment-staging || true'
+        }
+      }
+    }
+  }
+}
+EOF
+
+```
+
+> **Ports importants :**
+> - `8080` → réservé à Jenkins (depuis TP2)
+> - `8001` → SentimentAI staging (configuré dans `infra/variables.tf` au TP4)
+> - `9090` → Prometheus
+> - `3000` → Grafana
+
+#### Fichier deploy.sh
+
+```bash
+cat > deploy.sh << 'EOF'
+#!/bin/sh
+docker rm -f sentiment-staging prometheus grafana 2>/dev/null || true
+terraform init -upgrade
+terraform apply -auto-approve
+EOF
+chmod +x deploy.sh
+git add deploy.sh
+git commit -m "fix: ensure deploy.sh removes containers"
+git push
+```
+
+#### Fichier monitorign.fr
+
+```bash
+cat > infra/monitoring.tf << 'EOF'
+resource "docker_image" "prometheus" {
+  name         = "prom/prometheus:latest"
+  keep_locally = true
+}
+
+resource "docker_container" "prometheus" {
+  name    = "prometheus"
+  image   = docker_image.prometheus.image_id
+  restart = "unless-stopped"
+
+  networks_advanced {
+    name = data.docker_network.cicd.name
+  }
+
+  ports {
+    internal = 9090
+    external = 9090
+  }
+
+  volumes {
+    host_path      = "/home/labadmin/sentiment-ai/monitoring/prometheus.yml"
+    container_path = "/etc/prometheus/prometheus.yml"
+    read_only      = true
+  }
+
+  volumes {
+    host_path      = "/home/labadmin/sentiment-ai/monitoring/alerts.yml"
+    container_path = "/etc/prometheus/alerts.yml"
+    read_only      = true
+  }
+}
+
+resource "docker_image" "grafana" {
+  name         = "grafana/grafana:latest"
+  keep_locally = true
+}
+
+resource "docker_container" "grafana" {
+  name    = "grafana"
+  image   = docker_image.grafana.image_id
+  restart = "unless-stopped"
+
+  networks_advanced {
+    name = data.docker_network.cicd.name
+  }
+
+  ports {
+    internal = 3000
+    external = 3000
+  }
+
+  env = ["GF_SECURITY_ADMIN_PASSWORD=admin"]
+}
+EOF
+```
+#### Test 
+
+```bash
+cat <<EOF >> README.md
+
+## Progression des TP
+- [x] TP 1 à 5 : Terminés
+EOF
+
+git add .
+git commit -m "docs : Final TP (1 à 5)"
+git push origin main
+```
+![image](https://hackmd.io/_uploads/HJX9TQ7Mzg.png)
+
+![image](https://hackmd.io/_uploads/ByOl2XQGGx.png)
+![image](https://hackmd.io/_uploads/S1zG3XQfMx.png)
+![image](https://hackmd.io/_uploads/HJAdTXXfze.png)
+
+---
+
+### Questions — Section 4
+
+#### Question 4.1
+Faites un screenshot du pipeline Jenkins avec les 11 stages tous verts.
+![image](https://hackmd.io/_uploads/BJtzhX7GGg.png)
+
+
+**Réponse :** Le pipeline doit afficher les 11 stages en vert dans la vue **Stage View** de Jenkins. Le stage **Smoke Test** (11e) doit être le dernier et passer avec les 4 vérifications (health, metrics, Prometheus UP, Grafana). En cas d'échec, les logs `docker logs prometheus` et `docker logs sentiment-staging` sont automatiquement affichés.
+
+
+
+---
+
+#### Question 4.2
+Pourquoi le smoke test attend-il **20 secondes** avant de vérifier que Prometheus scrape l'app ? Que se passerait-il si on n'attendait pas ?
+
+**Réponse :**
+
+Le smoke test attend 20 s car Prometheus est configuré avec `scrape_interval: 15s`. Cela signifie que Prometheus collecte les métriques **toutes les 15 secondes**. Si on vérifiait immédiatement après le démarrage :
+
+- Prometheus n'aurait pas encore eu le temps d'effectuer un premier scrape
+- La métrique `up{job='sentiment-ai'}` ne serait pas encore présente dans la base de données de Prometheus
+- La requête PromQL retournerait un résultat vide, et le `grep -q '"value":.*1'` échouerait
+
+En attendant 20 s (légèrement plus que l'intervalle de 15 s), on garantit qu'**au moins un cycle de scrape** s'est écoulé et que Prometheus a pu confirmer que l'app est bien `UP`.
+
+---
+
+#### Question 4.3
+Que se passe-t-il si le smoke test échoue à l'étape 3 (Prometheus scrape) ? Quels logs sont affichés dans Jenkins ?
+
+**Réponse :**
+
+Si l'étape 3 échoue (la valeur `up{job='sentiment-ai'}` n'est pas `1`) :
+
+1. Le `exit 1` déclenche l'échec du stage `Smoke Test`
+2. Jenkins marque le build en **FAILURE** (rouge)
+3. Le bloc `post { failure { ... } }` s'exécute automatiquement et affiche dans la console Jenkins :
+   - `docker logs prometheus` → logs de Prometheus (erreurs de configuration, échecs de scrape, etc.)
+   - `docker logs sentiment-staging` → logs de SentimentAI (erreurs au démarrage, exceptions, etc.)
+4. Le message `Smoke Test KO -- voir logs ci-dessus` est affiché
+
+Les causes probables d'un tel échec : le conteneur `sentiment-staging` n'est pas démarré, l'endpoint `/metrics` n'est pas accessible depuis le réseau Docker, ou le nom DNS `sentiment-staging` ne résout pas correctement.
+
+---
+
+## Architecture finale du pipeline CI/CD
+
+```
+Git push
+    │
+    ▼
+Jenkins (build + test + push)
+    │
+    ├── SonarQube  ──── Qualité du code
+    ├── Trivy      ──── Sécurité des images
+    │
+    ▼
+Terraform (IaC)
+    │
+    ├── sentiment-staging:8001  ──── API FastAPI
+    ├── prometheus:9090         ──── Collecte métriques (15s)
+    └── grafana:3000            ──── Dashboards temps réel
+    │
+    ▼
+Smoke Test Jenkins
+    ├── /health         ✓
+    ├── /metrics        ✓
+    ├── Prometheus UP   ✓
+    └── Grafana UP      ✓
+```
+
+---
+
 
 
 
