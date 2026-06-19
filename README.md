@@ -156,7 +156,7 @@ RUN pip install -r req.txt     ← Layer 3 : change rarement → mis en cache !
 COPY src/ ./src/               ← Layer 4 : change souvent → invalidation ici
 ```
 
->  **Explication du schéma :** Les layers sont empilés du plus stable (en haut) au plus volatile (en bas). Docker réutilise le cache de chaque layer tant que son contenu n'a pas changé. Ici, si seul un fichier `.py` dans `src/` est modifié, Docker réutilise les layers 1 à 3 depuis le cache et ne recalcule que le layer 4. Sans cette organisation, `pip install` serait relancé à chaque modification du code — ce qui peut prendre plusieurs minutes inutilement.
+>  **Explication du schéma :** Les layers sont empilés du plus stable (en haut) au plus volatile (en bas). Docker réutilise le cache de chaque layer tant que son contenu n'a pas changé. Ici, si seul un fichier `.py` dans `src/` est modifié, Docker réutilise les layers 1 à 3 depuis le cache et ne recalcule que le layer 4. Sans cette organisation, `pip install` serait relancé à chaque modification du code- ce qui peut prendre plusieurs minutes inutilement.
 
 Si seul un fichier dans `src/` change, Docker réutilise les layers 1, 2 et 3 depuis le cache et ne recalcule que la layer 4. Sans cette organisation, `pip install` serait relancé à chaque modification de code - ce qui prendrait plusieurs minutes.
 
@@ -263,7 +263,7 @@ terraform init && terraform fmt && terraform validate && terraform plan && terra
 > - `terraform init` : télécharge les plugins (providers Azure) et initialise le backend distant configuré dans `backend.tf`.
 > - `terraform fmt` : reformate automatiquement les fichiers `.tf` selon les conventions Terraform (indentation, alignement).
 > - `terraform validate` : vérifie la syntaxe et la cohérence logique de la configuration sans contacter Azure.
-> - `terraform plan` : affiche un aperçu des ressources qui seront créées, modifiées ou détruites — aucune action réelle.
+> - `terraform plan` : affiche un aperçu des ressources qui seront créées, modifiées ou détruites- aucune action réelle.
 > - `terraform apply -auto-approve` : déploie effectivement l'infrastructure sur Azure sans demander de confirmation interactive.
 >
 > L'opérateur `&&` enchaîne les commandes : si l'une échoue, les suivantes ne s'exécutent pas.
@@ -485,7 +485,7 @@ EOF
 > - `cat > fichier <<'EOF' ... EOF` : redirige le texte entre les deux `EOF` vers le fichier. C'est un *heredoc* shell qui permet d'écrire un fichier multi-lignes en une seule commande.
 > - `BaseModel` (Pydantic) : classe parente qui active la validation automatique des données. Toute instance de `PredictionRequest` aura son champ `text` validé dès la création.
 > - `Field(..., min_length=1, max_length=5000)` : le `...` signifie que le champ est **obligatoire** (pas de valeur par défaut). `min_length=1` rejette les chaînes vides, `max_length=5000` protège contre les payloads trop lourds.
-> - `Literal["POSITIVE", "NEGATIVE", "NEUTRAL"]` : contraint le champ `label` à exactement ces trois valeurs. Pydantic lèvera une erreur de validation si une autre valeur est retournée — garantissant la cohérence du contrat d'API.
+> - `Literal["POSITIVE", "NEGATIVE", "NEUTRAL"]` : contraint le champ `label` à exactement ces trois valeurs. Pydantic lèvera une erreur de validation si une autre valeur est retournée- garantissant la cohérence du contrat d'API.
 
 ![image](https://hackmd.io/_uploads/B1az3Q-MMl.png)
 
@@ -594,9 +594,9 @@ EOF
 
 >  **Explication du code `main.py` :**
 > - `FastAPI(title=..., version=...)` : crée l'application avec des métadonnées visibles dans la documentation automatique Swagger UI à l'adresse `/docs`.
-> - `model = SentimentModel()` : instanciation **unique** du modèle au niveau module. FastAPI charge le modèle une seule fois au démarrage du serveur — pas à chaque requête. C'est crucial pour les performances.
+> - `model = SentimentModel()` : instanciation **unique** du modèle au niveau module. FastAPI charge le modèle une seule fois au démarrage du serveur- pas à chaque requête. C'est crucial pour les performances.
 > - `@app.get("/health")` : décorateur FastAPI qui enregistre la fonction `health()` comme handler de la route `GET /health`. Retourner un dictionnaire Python est automatiquement converti en JSON.
-> - `@app.post("/predict", response_model=PredictionResponse)` : `response_model` indique à FastAPI de valider la réponse avec le schéma Pydantic `PredictionResponse` avant de la renvoyer — protégeant les clients d'une réponse malformée.
+> - `@app.post("/predict", response_model=PredictionResponse)` : `response_model` indique à FastAPI de valider la réponse avec le schéma Pydantic `PredictionResponse` avant de la renvoyer- protégeant les clients d'une réponse malformée.
 
 ![image](https://hackmd.io/_uploads/rkVi27bMzx.png)
 
@@ -670,7 +670,7 @@ EOF
 ```
 
 >  **Explication du code `test_api.py` :**
-> - `TestClient(app)` : client HTTP de test fourni par FastAPI (via Starlette). Il simule des requêtes HTTP réelles **sans démarrer de vrai serveur** — les tests sont donc rapides et exécutables sans réseau.
+> - `TestClient(app)` : client HTTP de test fourni par FastAPI (via Starlette). Il simule des requêtes HTTP réelles **sans démarrer de vrai serveur**- les tests sont donc rapides et exécutables sans réseau.
 > - `assert r.status_code == 200` : vérifie que le serveur a répondu avec le code HTTP 200 (succès). Si la condition est fausse, pytest lève une `AssertionError` et marque le test en échec.
 > - `test_predict_empty_fails` : teste un cas d'erreur volontaire. Envoyer `{"text": ""}` doit déclencher la validation Pydantic (`min_length=1`) et retourner HTTP 422 (Unprocessable Entity). Tester les chemins d'erreur est aussi important que tester les chemins de succès.
 > - `test_predict_neutral` : l'assertion `== 0.5` (pas `>= 0.5`) vérifie la valeur exacte, garantissant que la logique du modèle n'a pas changé.
@@ -775,9 +775,9 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 >  **Explication du Dockerfile :**
 > - `FROM python:3.11-slim` : image de base officielle Python 3.11 en version allégée (~150 Mo vs ~900 Mo pour la version complète). Contient uniquement le minimum pour exécuter Python.
 > - `WORKDIR /app` : définit `/app` comme répertoire de travail dans le conteneur. Toutes les commandes suivantes (`COPY`, `RUN`, `CMD`) s'exécuteront depuis ce répertoire. S'il n'existe pas, Docker le crée automatiquement.
-> - `COPY requirements.txt .` : copie **uniquement** le fichier de dépendances en premier. Cette couche est mise en cache et ne sera recalculée que si `requirements.txt` change — pas si le code source change.
+> - `COPY requirements.txt .` : copie **uniquement** le fichier de dépendances en premier. Cette couche est mise en cache et ne sera recalculée que si `requirements.txt` change- pas si le code source change.
 > - `RUN pip install --no-cache-dir -r requirements.txt` : installe toutes les dépendances. `--no-cache-dir` évite que pip stocke les archives téléchargées dans l'image, réduisant la taille finale.
-> - `EXPOSE 8000` : documentation du port utilisé (n'ouvre pas réellement le port — c'est `-p` lors de `docker run` qui le fait).
+> - `EXPOSE 8000` : documentation du port utilisé (n'ouvre pas réellement le port- c'est `-p` lors de `docker run` qui le fait).
 > - `CMD [...]` : commande exécutée au démarrage du conteneur. `src.main:app` indique à Uvicorn le module (`src.main`) et l'objet FastAPI (`app`) à servir. `--host 0.0.0.0` écoute sur toutes les interfaces réseau du conteneur.
 
 ![image](https://hackmd.io/_uploads/SkVwCQWGGe.png)
@@ -1002,7 +1002,7 @@ docker compose logs -f sentiment-ai
 docker compose down
 ```
 
->  **Explication :** `docker compose down` arrête et supprime proprement tous les conteneurs et le réseau créés par `docker compose up`. Contrairement à `docker compose stop` (qui arrête sans supprimer), `down` nettoie complètement. Les **volumes nommés** sont conservés par défaut — il faut ajouter `-v` pour les supprimer.
+>  **Explication :** `docker compose down` arrête et supprime proprement tous les conteneurs et le réseau créés par `docker compose up`. Contrairement à `docker compose stop` (qui arrête sans supprimer), `down` nettoie complètement. Les **volumes nommés** sont conservés par défaut- il faut ajouter `-v` pour les supprimer.
 
 ```bash
 # Pour tout supprimer y compris les volumes :
@@ -1092,7 +1092,7 @@ git log --oneline --decorate
 ```
 
 >  **Explication :**
-> - `make tag` : exécute les deux commandes de la cible `tag` du Makefile — crée le tag annoté puis le pousse vers GitHub.
+> - `make tag` : exécute les deux commandes de la cible `tag` du Makefile- crée le tag annoté puis le pousse vers GitHub.
 > - `git tag -l` : liste tous les tags existants localement. Doit afficher `v0.1.0`.
 > - `git log --oneline --decorate` : affiche l'historique des commits avec les tags et branches associés. Le tag `v0.1.0` devrait apparaître à côté du commit courant, ex. : `a3f8c12 (HEAD -> main, tag: v0.1.0, origin/main) feat: ...`.
 
@@ -1114,7 +1114,7 @@ Le fichier `.gitignore` liste les fichiers et dossiers que Git doit ignorer, c'e
 
 **Pourquoi ne pas commiter `__pycache__/` ?**
 
-Le dossier `__pycache__/` contient les fichiers `.pyc`, qui sont des versions compilées en bytecode des modules Python. Ces fichiers sont générés automatiquement par l'interpréteur à chaque exécution et sont propres à la version locale de Python — ils diffèrent d'une machine à l'autre. Les commiter polluerait l'historique Git avec des fichiers binaires inutiles, provoquerait des conflits de merge constants entre développeurs, et alourdirait le repository sans aucune valeur ajoutée.
+Le dossier `__pycache__/` contient les fichiers `.pyc`, qui sont des versions compilées en bytecode des modules Python. Ces fichiers sont générés automatiquement par l'interpréteur à chaque exécution et sont propres à la version locale de Python- ils diffèrent d'une machine à l'autre. Les commiter polluerait l'historique Git avec des fichiers binaires inutiles, provoquerait des conflits de merge constants entre développeurs, et alourdirait le repository sans aucune valeur ajoutée.
 
 ---
 
@@ -1324,7 +1324,7 @@ Machine hôte
     └── monte /var/run/docker.sock  →  peut faire docker build, docker push…
 ```
 
->  **Explication du schéma DooD :** Le daemon Docker est le processus central qui gère les conteneurs sur la machine hôte. En montant son socket dans le conteneur Jenkins, on lui permet d'envoyer des commandes au daemon hôte comme s'il était installé directement. Jenkins peut ainsi builder et pousser des images sans avoir son propre daemon Docker — d'où le nom "Docker-out-of-Docker" (par opposition à "Docker-in-Docker" qui ferait tourner un daemon complet à l'intérieur du conteneur).
+>  **Explication du schéma DooD :** Le daemon Docker est le processus central qui gère les conteneurs sur la machine hôte. En montant son socket dans le conteneur Jenkins, on lui permet d'envoyer des commandes au daemon hôte comme s'il était installé directement. Jenkins peut ainsi builder et pousser des images sans avoir son propre daemon Docker- d'où le nom "Docker-out-of-Docker" (par opposition à "Docker-in-Docker" qui ferait tourner un daemon complet à l'intérieur du conteneur).
 
 > **Risque de sécurité** : monter le socket Docker donne au conteneur Jenkins les mêmes droits que `root` sur l'hôte. En production, on préférera [Kaniko](https://github.com/GoogleContainerTools/kaniko) ou [Buildah](https://buildah.io/), qui ne nécessitent pas de daemon Docker.
 
@@ -1414,7 +1414,7 @@ Jenkins sera installé dans un conteneur Docker qui a accès au daemon Docker de
 docker volume create jenkins-data
 ```
 
->  **Explication :** `docker volume create` crée un volume Docker nommé `jenkins-data`. Un volume est un espace de stockage géré par Docker, indépendant du système de fichiers du conteneur. Les données écrites dans ce volume survivent aux arrêts, redémarrages et suppressions du conteneur Jenkins — permettant de conserver jobs, builds, plugins et credentials entre les sessions.
+>  **Explication :** `docker volume create` crée un volume Docker nommé `jenkins-data`. Un volume est un espace de stockage géré par Docker, indépendant du système de fichiers du conteneur. Les données écrites dans ce volume survivent aux arrêts, redémarrages et suppressions du conteneur Jenkins- permettant de conserver jobs, builds, plugins et credentials entre les sessions.
 
 ![image](https://hackmd.io/_uploads/ByPBhVbMMl.png)
 
@@ -1434,7 +1434,7 @@ docker run -d \
 > - `--name jenkins` : nom lisible pour référencer le conteneur.
 > - `-p 8080:8080` : accès à l'interface web Jenkins (hôte:conteneur).
 > - `-p 50000:50000` : port de communication Jenkins master-agent (pour les agents Jenkins distants).
-> - `-v jenkins-data:/var/jenkins_home` : monte le volume persistant sur le répertoire home de Jenkins — **toutes les données Jenkins** (jobs, plugins, configurations) sont stockées ici.
+> - `-v jenkins-data:/var/jenkins_home` : monte le volume persistant sur le répertoire home de Jenkins- **toutes les données Jenkins** (jobs, plugins, configurations) sont stockées ici.
 > - `-v /var/run/docker.sock:/var/run/docker.sock` : monte le socket Docker de l'hôte dans le conteneur, permettant au pipeline Jenkins d'exécuter `docker build` et `docker push` via le daemon hôte (technique DooD).
 > - `jenkins/jenkins:lts` : image officielle Jenkins en version LTS (Long Term Support), la plus stable.
 
@@ -1481,7 +1481,7 @@ docker exec -u root jenkins chmod 666 /var/run/docker.sock
 docker exec -u jenkins jenkins docker ps
 ```
 
->  **Explication :** Par défaut, le socket `/var/run/docker.sock` appartient au groupe `docker` de l'hôte. L'utilisateur `jenkins` du conteneur n'appartient pas nécessairement à ce groupe. `chmod 666` donne les permissions de lecture et écriture à tous les utilisateurs sur le socket. Note : cette solution est simple mais réduit la sécurité — en production, on ajouterait l'utilisateur `jenkins` au groupe `docker`.
+>  **Explication :** Par défaut, le socket `/var/run/docker.sock` appartient au groupe `docker` de l'hôte. L'utilisateur `jenkins` du conteneur n'appartient pas nécessairement à ce groupe. `chmod 666` donne les permissions de lecture et écriture à tous les utilisateurs sur le socket. Note : cette solution est simple mais réduit la sécurité- en production, on ajouterait l'utilisateur `jenkins` au groupe `docker`.
 
 ![image](https://hackmd.io/_uploads/H1fE04-ffe.png)
 ![image](https://hackmd.io/_uploads/ryb8R4-MGl.png)
@@ -1537,7 +1537,7 @@ echo "Blue Ocean:"; ls /var/jenkins_home/plugins/blueocean.jpi 2>/dev/null && ec
 '
 ```
 
->  **Explication :** Ce script vérifie que les fichiers `.jpi` (Jenkins Plugin Interface) des plugins installés existent dans le répertoire des plugins Jenkins. `2>/dev/null` redirige les erreurs (fichier non trouvé) vers `/dev/null` pour ne pas les afficher. `&& echo OK` s'affiche uniquement si le fichier existe — permettant de confirmer que chaque plugin est installé.
+>  **Explication :** Ce script vérifie que les fichiers `.jpi` (Jenkins Plugin Interface) des plugins installés existent dans le répertoire des plugins Jenkins. `2>/dev/null` redirige les erreurs (fichier non trouvé) vers `/dev/null` pour ne pas les afficher. `&& echo OK` s'affiche uniquement si le fichier existe- permettant de confirmer que chaque plugin est installé.
 
 ![image](https://hackmd.io/_uploads/Sy2NGHbMMe.png)
 
@@ -1576,7 +1576,7 @@ gh auth token
 > - `gh --version` : confirme que le CLI GitHub est installé.
 > - `gh auth login` : authentification interactive du CLI auprès de GitHub.
 > - `gh auth refresh -h github.com -s repo,read:packages,write:packages` : renouvelle le token d'authentification en ajoutant les scopes (permissions) nécessaires pour cloner des dépôts (`repo`), lire (`read:packages`) et écrire (`write:packages`) dans GitHub Container Registry.
-> - `gh auth status` : affiche les informations du compte connecté et les scopes accordés — permet de vérifier que toutes les permissions sont présentes.
+> - `gh auth status` : affiche les informations du compte connecté et les scopes accordés- permet de vérifier que toutes les permissions sont présentes.
 > - `gh auth token` : affiche le token d'accès personnel actuel. Ce token sera copié dans Jenkins comme credential.
 
 ![image](https://hackmd.io/_uploads/SkjdmS-fMg.png)
@@ -1608,7 +1608,7 @@ Par défaut, toutes les données Jenkins (jobs, historique des builds, plugins i
 
 En montant le volume `jenkins-data` sur ce chemin, on découple les données du conteneur :
 
-- Si on fait `docker rm jenkins` puis `docker run ... jenkins/jenkins:lts`, Jenkins retrouve exactement l'état où on l'avait laissé — jobs configurés, builds passés, plugins, credentials inclus.
+- Si on fait `docker rm jenkins` puis `docker run ... jenkins/jenkins:lts`, Jenkins retrouve exactement l'état où on l'avait laissé- jobs configurés, builds passés, plugins, credentials inclus.
 - On peut mettre à jour l'image Jenkins (passage de `lts` à une version plus récente) sans perdre aucune configuration.
 - On peut sauvegarder les données Jenkins simplement en sauvegardant le volume.
 
@@ -1663,7 +1663,7 @@ EOF
 > - `agent any` : indique que le pipeline peut s'exécuter sur n'importe quel nœud Jenkins disponible (ici, le nœud master).
 > - `environment { }` : bloc de déclaration de variables d'environnement disponibles dans tous les stages.
 >   - `IMAGE_NAME` et `REGISTRY` : constantes définissant les coordonnées de l'image Docker.
->   - `IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()` : **évaluation dynamique** — exécute une commande shell pour obtenir le SHA court du dernier commit Git et l'assigne à la variable. `.trim()` supprime le saut de ligne final retourné par la commande shell.
+>   - `IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()` : **évaluation dynamique**- exécute une commande shell pour obtenir le SHA court du dernier commit Git et l'assigne à la variable. `.trim()` supprime le saut de ligne final retourné par la commande shell.
 > - `stages { }` : contiendra les 4 stages du pipeline (Checkout, Lint, Build&Test, Push).
 > - `post { }` : actions post-pipeline. `always` s'exécute systématiquement, `success` uniquement en cas de succès, `failure` uniquement en cas d'échec.
 > - `2>/dev/null` : redirige stderr vers /dev/null (silence les erreurs). `|| true` rend la commande toujours "réussie".
@@ -1695,8 +1695,8 @@ stage('Checkout') {
 
 >  **Explication du stage Checkout :**
 > - `checkout scm` : commande Jenkins qui clone le dépôt Git configuré dans le job (URL + credentials + branche). `scm` est une variable Groovy magique qui référence la configuration SCM du job.
-> - `${env.BRANCH_NAME}` : variable d'environnement Jenkins injectée automatiquement — contient le nom de la branche en cours de build (ex. `main`, `feat/my-feature`).
-> - `${env.GIT_COMMIT}` : SHA complet du commit en cours de build — utile pour la traçabilité dans les logs.
+> - `${env.BRANCH_NAME}` : variable d'environnement Jenkins injectée automatiquement- contient le nom de la branche en cours de build (ex. `main`, `feat/my-feature`).
+> - `${env.GIT_COMMIT}` : SHA complet du commit en cours de build- utile pour la traçabilité dans les logs.
 > - `sh 'git log --oneline -5'` : affiche les 5 derniers commits dans les logs Jenkins, utile pour confirmer que le bon code a été récupéré.
 
 ### 2.3 Stage 2 - Lint
@@ -1721,7 +1721,7 @@ stage('Lint') {
 > - `docker run --rm` : lance un conteneur qui sera **automatiquement supprimé** après son exécution (`--rm`). Évite l'accumulation de conteneurs orphelins.
 > - `--volumes-from jenkins` : monte tous les volumes du conteneur Jenkins dans ce conteneur temporaire. Cela donne accès au `$WORKSPACE` (répertoire de travail Jenkins contenant le code source cloné).
 > - `-w $WORKSPACE` : définit `$WORKSPACE` comme répertoire de travail. `$WORKSPACE` est une variable Jenkins pointant vers le répertoire où le code a été cloné.
-> - `python:3.12-slim` : image Python officielle légère — pas besoin de l'image SentimentAI complète pour faire du lint.
+> - `python:3.12-slim` : image Python officielle légère- pas besoin de l'image SentimentAI complète pour faire du lint.
 > - `pip install flake8 -q && flake8 src/ --max-line-length=100` : installe flake8 silencieusement (`-q`) puis l'exécute sur le dossier `src/`. `--max-line-length=100` tolère des lignes jusqu'à 100 caractères (la limite par défaut est 79).
 
 ![image](https://hackmd.io/_uploads/BJuAvSZMzg.png)
@@ -1783,7 +1783,7 @@ stage('Build & Test') {
 > - `--cov=src` : mesure la couverture de code du package `src/`.
 > - `--cov-report=xml:coverage.xml` : génère un rapport XML de couverture (sera consommé par SonarQube au TP3).
 > - `--cov-report=term-missing` : affiche dans les logs Jenkins les numéros de lignes non couvertes.
-> - `--cov-fail-under=70` : **Quality Gate** — fait échouer pytest (code de sortie non nul) si la couverture est inférieure à 70%, ce qui fait échouer le stage Jenkins.
+> - `--cov-fail-under=70` : **Quality Gate**- fait échouer pytest (code de sortie non nul) si la couverture est inférieure à 70%, ce qui fait échouer le stage Jenkins.
 > - `post { failure { ... } }` : message d'erreur explicite affiché dans les logs si ce stage échoue, guidant le développeur vers la cause probable.
 
 ### 2.5 Stage 4 - Push (conditionnel)
@@ -1918,7 +1918,7 @@ pipeline {
 
 >  **Explication du Jenkinsfile complet :**
 > - **Stage `Checkout`** : clone le code et calcule `IMAGE_TAG` dynamiquement via un bloc `script { }` (nécessaire car `env.IMAGE_TAG` doit être défini après le checkout pour que `git rev-parse` fonctionne correctement).
-> - **Stage `Info`** : stage de diagnostic — affiche les 3 derniers commits et confirme que le workspace est accessible. Utile pour déboguer les problèmes de checkout.
+> - **Stage `Info`** : stage de diagnostic- affiche les 3 derniers commits et confirme que le workspace est accessible. Utile pour déboguer les problèmes de checkout.
 > - **Stage `Lint`** : utilise `-v $WORKSPACE:/app` pour monter le workspace Jenkins directement dans le conteneur (alternative à `--volumes-from jenkins`).
 > - **Stage `Build Docker`** : build l'image taguée avec le SHA. Utilise des guillemets simples triples `'''` pour le script shell multi-lignes.
 > - **Stage `Test`** : lance pytest dans l'image buildée. Séparé du build pour une meilleure lisibilité dans la vue des stages Jenkins.
@@ -2047,10 +2047,10 @@ docker exec -u root jenkins chmod 666 /var/run/docker.sock
 ```
 
 >  **Explication du guide de débogage :**
-> - **Erreur 1** : test de connectivité Docker depuis Jenkins. Si `docker ps` retourne une erreur, le socket n'est pas accessible — vérifier les options `-v /var/run/docker.sock:/var/run/docker.sock` dans la commande `docker run` de Jenkins.
+> - **Erreur 1** : test de connectivité Docker depuis Jenkins. Si `docker ps` retourne une erreur, le socket n'est pas accessible- vérifier les options `-v /var/run/docker.sock:/var/run/docker.sock` dans la commande `docker run` de Jenkins.
 > - **Erreur 2** : solution rapide pour les erreurs de permissions sur le socket (à reappliquer si le conteneur Jenkins a été redémarré).
 > - **Erreur 3** : `ModuleNotFoundError: No module named 'src'` est l'erreur la plus courante. Elle signifie que le Dockerfile ne copie pas correctement `src/` ou que `__init__.py` est manquant.
-> - **Erreur 4** : `unauthorized` lors du push vers ghcr.io — vérifier que l'ID du credential dans Jenkins correspond exactement à celui référencé dans `withCredentials(credentialsId: ...)`.
+> - **Erreur 4** : `unauthorized` lors du push vers ghcr.io- vérifier que l'ID du credential dans Jenkins correspond exactement à celui référencé dans `withCredentials(credentialsId: ...)`.
 
 ---
 
@@ -2079,7 +2079,7 @@ Faites un second build en modifiant un fichier source (par exemple, ajouter un c
 echo "# test pipeline second build" >> src/main.py
 ```
 
->  **Explication :** `echo "..." >> fichier` ajoute (`>>`) le texte à la fin du fichier sans l'écraser (`>` écraserait). L'ajout d'un commentaire Python (ligne commençant par `#`) est une modification minimale qui ne change pas le comportement de l'application mais force Git à voir un changement — ce qui déclenchera le pipeline Jenkins.
+>  **Explication :** `echo "..." >> fichier` ajoute (`>>`) le texte à la fin du fichier sans l'écraser (`>` écraserait). L'ajout d'un commentaire Python (ligne commençant par `#`) est une modification minimale qui ne change pas le comportement de l'application mais force Git à voir un changement- ce qui déclenchera le pipeline Jenkins.
 
 ![image](https://hackmd.io/_uploads/S1YAWIZzfx.png)
 
@@ -2193,7 +2193,7 @@ git push origin --delete feat/test-webhook
 
 > **Explication du test de webhook :**
 > - `git checkout -b feat/test-webhook` : crée et bascule vers une nouvelle branche de test.
-> - `echo '# test webhook' >> README.md` : ajoute une ligne au README — modification minime pour provoquer un push.
+> - `echo '# test webhook' >> README.md` : ajoute une ligne au README- modification minime pour provoquer un push.
 > - `git push origin feat/test-webhook` : pousse la branche vers GitHub. GitHub envoie immédiatement une requête POST à l'URL ngrok configurée comme webhook. Jenkins reçoit cette notification et déclenche un nouveau build.
 > - Après vérification dans Jenkins (le build doit démarrer en quelques secondes), on nettoie : `git checkout main`, `git branch -d feat/test-webhook`, `git push origin --delete feat/test-webhook`.
 
@@ -2326,7 +2326,7 @@ Seul `main` représente le code **validé, reviewé et mergé** - c'est le seul 
 5. Image disponible dans le registry : ghcr.io/pseudo/sentiment-ai:a3f8c12
 ```
 
-> **Explication du workflow :** Ce flux représente le chemin complet d'un push de code jusqu'à une image publiée. Étape 1 : le développeur pousse son code. Étape 2 : GitHub déclenche Jenkins via webhook (instantané) ou Poll SCM (délai jusqu'à 5 min). Étape 3 : Jenkins exécute chaque stage en séquence — si l'un échoue, le pipeline s'arrête et l'image n'est pas poussée. Étape 4 : le push ne s'effectue que si tous les stages sont verts ET qu'on est sur `main`. Étape 5 : l'image est disponible dans le registry, prête à être déployée en production.
+> **Explication du workflow :** Ce flux représente le chemin complet d'un push de code jusqu'à une image publiée. Étape 1 : le développeur pousse son code. Étape 2 : GitHub déclenche Jenkins via webhook (instantané) ou Poll SCM (délai jusqu'à 5 min). Étape 3 : Jenkins exécute chaque stage en séquence- si l'un échoue, le pipeline s'arrête et l'image n'est pas poussée. Étape 4 : le push ne s'effectue que si tous les stages sont verts ET qu'on est sur `main`. Étape 5 : l'image est disponible dans le registry, prête à être déployée en production.
 
 ### C - Traçabilité et Versionnement
 
@@ -2480,7 +2480,7 @@ code .
 ```yaml
 #cloud-config
 # ============================================================
-# Cloud-init — Provisionnement automatique au premier démarrage
+# Cloud-init- Provisionnement automatique au premier démarrage
 # Installe : Docker CE + Docker Compose + Git + Make + GitHub CLI + ngrok + Terraform
 # Tous les services sont configurés avec les bonnes permissions
 # Installation Docker CE + Compose	
