@@ -4640,6 +4640,671 @@ e2c5f88 feat: initial SentimentAI application with Docker setup
 Les messages suivent la convention **Conventional Commits** : `type(scope): description` où `type` est `feat`, `fix`, `ci`, `test`, `docs`, `refactor`, etc.
 
 ---
+# TP 4 — Terraform & Infrastructure as Code
+
+
+Provisionner l'environnement staging de SentimentAI avec Terraform
+
+---
+
+## Objectif
+
+Remplacer le `docker compose up` manuel par Terraform : l'infrastructure devient **déclarative**, **versionnée dans Git** et **intégrée au pipeline Jenkins**.
+
+| Livrable attendu | Critère de validation |
+|---|---|
+| Dossier `infra/` commité | `main.tf`, `variables.tf`, `outputs.tf` présents |
+| `terraform apply` fonctionnel | Conteneur staging démarré sur le port 8001 |
+| Pipeline Jenkins 10 stages | Tous les stages verts sur `main` |
+
+---
+
+
+Terraform décrit **ce qu'on veut** (un réseau, une image, un conteneur) et `terraform apply` le crée : idempotent, reproductible, traçable.
+
+---
+
+## 1. Installer Terraform
+
+### 1.1 Installation
+
+**Linux (Ubuntu/Debian)**
+
+```bash
+wget -O - https://apt.releases.hashicorp.com/gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] \
+  https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+  sudo tee /etc/apt/sources.list.d/hashicorp.list
+
+sudo apt update && sudo apt install terraform -y
+```
+
+**Ce que font ces commandes :**
+1. On importe la clé GPG officielle de HashiCorp pour vérifier l'authenticité des paquets.
+2. On ajoute le dépôt HashiCorp dans les sources APT en le liant à cette clé.
+3. On met à jour la liste des paquets et on installe Terraform.
+
+
+
+**Vérification**
+
+```bash
+terraform version
+```
+![image](https://hackmd.io/_uploads/H1OVOpGfMx.png)
+
+
+---
+
+### 1.2 Structure du projet
+
+```bash
+mkdir -p infra
+touch infra/main.tf infra/variables.tf infra/outputs.tf
+find infra/ | sort
+```
+![image](https://hackmd.io/_uploads/BJUnuazMfl.png)
+
+
+> **Convention de découpage en 3 fichiers :**
+>
+> | Fichier | Rôle |
+> |---|---|
+> | `main.tf` | Provider + ressources Docker (réseau, image, conteneur) |
+> | `variables.tf` | Paramètres configurables (port, nom, tag d'image…) |
+> | `outputs.tf` | Valeurs exposées après `apply` (URL, ID conteneur…) |
+>
+> Ce découpage est une convention Terraform, pas une obligation technique. Il améliore la lisibilité et permet de modifier les paramètres sans toucher aux ressources.
+
+---
+
+### 1.3 Mettre à jour `.gitignore`
+
+```bash
+cat >> .gitignore << 'EOF'
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+EOF
+```
+![image](https://hackmd.io/_uploads/HyOHYpMzGg.png)
+
+>  **Important — à faire avant le premier `terraform init`**
+>
+> - `.terraform/` contient les **plugins providers** téléchargés (binaires lourds, inutiles à versionner).
+> - `*.tfstate` et `*.tfstate.backup` contiennent l'**état de l'infrastructure** : IDs de ressources, parfois des secrets. Ce fichier ne doit **jamais** être dans Git en production (utiliser un backend distant comme S3 à la place).
+> - `.terraform.lock.hcl` fixe les versions des providers ; peut être commité selon les équipes, mais souvent ignoré.
+
+---
+
+###  Question 1.1
+
+Faites un screenshot de `terraform version`. Quelle version est installée sur votre machine ?
+![image](https://hackmd.io/_uploads/BJBctTfzfl.png)
+Version : v1.15.6
+
+###  Question 1.2
+
+Pourquoi ajoute-t-on `.terraform/` dans `.gitignore` ? Que contient ce dossier après `terraform init` ?
+
+**Réponse :** Après `terraform init`, `.terraform/` contient les binaires des providers téléchargés (ici `kreuzwerker/docker`). Ces binaires sont compilés pour l'OS courant, volumineux, et régénérables à la demande — les committer alourdirait le dépôt inutilement.
+
+---
+
+## 2. Écrire les Fichiers HCL
+
+### 2.1 Configurer le provider Docker — `infra/main.tf`
+
+Avant d'écrire le fichier, vérifiez l'emplacement du socket Docker :
+
+```bash
+# Linux : socket standard
+ls -la /var/run/docker.sock
+```
+![image](https://hackmd.io/_uploads/H110KpGzGe.png)
+
+
+```bash
+cat > infra/main.tf << 'EOF'
+# infra/main.tf
+
+terraform {
+  required_providers {
+    docker = {
+      source  = "kreuzwerker/docker"
+      version = "~> 3.0"
+    }
+  }
+}
+
+# Configuration du provider Docker utilisant le socket local
+provider "docker" {
+  # L'emplacement /var/run/docker.sock est le standard pour les systèmes Linux
+  host = "unix:///var/run/docker.sock"
+}
+EOF
+```
+![image](https://hackmd.io/_uploads/BJKU9pGMzl.png)
+
+
+**Rôle du provider Docker**
+
+Le provider `kreuzwerker/docker` est un **plugin Terraform** qui communique avec le daemon Docker via le socket Unix — exactement comme Docker Compose, mais de façon déclarative.
+
+- `source = "kreuzwerker/docker"` : identifiant du provider dans le registre Terraform public.
+- `version = "~> 3.0"` : opérateur pessimiste — accepte `3.0`, `3.1`, `3.x`… mais pas `4.0`. Protège contre les breaking changes.
+- `terraform init` télécharge ce provider dans `.terraform/` (ignoré par Git).
+
+---
+
+### 2.2 Déclarer les variables — `infra/variables.tf`
+
+```bash
+cat > infra/variables.tf << 'EOF'
+# infra/variables.tf
+
+variable "image_tag" {
+  description = "Tag de l'image Docker a deployer"
+  type        = string
+  default     = "latest"
+}
+
+# Port 8080 réservé à Jenkins -- staging sur 8001
+variable "app_port" {
+  description = "Port expose en staging"
+  type        = number
+  default     = 8001
+}
+
+variable "container_name" {
+  description = "Nom du conteneur staging"
+  type        = string
+  default     = "sentiment-staging"
+}
+
+variable "registry" {
+  description = "Registry Docker (ex: ghcr.io/monpseudo)"
+  type        = string
+  default     = "ghcr.io/dspitech"
+}
+EOF
+```
+![image](https://hackmd.io/_uploads/S1Hsc6zzfx.png)
+
+
+> **Pourquoi des variables ?**
+>
+> Les variables Terraform permettent de **paramétrer la configuration sans modifier les ressources**. On les déclare dans `variables.tf` et on les référence dans `main.tf` via `${var.nom}`.
+>
+> Avantages :
+> - Changer le port ou le tag de l'image ne nécessite qu'une modification dans `variables.tf`.
+> - Les valeurs peuvent être surchargées au moment du `terraform apply` via `-var='app_port=9000'` ou un fichier `.tfvars`.
+>
+>  **Conflit de port :** Jenkins occupe le port 8080 depuis le TP2. `app_port` est fixé à `8001` pour éviter tout conflit.
+
+---
+
+### 2.3 Déclarer les ressources — suite de `infra/main.tf`
+
+```bash
+cat >> infra/main.tf << 'EOF'
+
+# Suite de infra/main.tf
+
+# Réseau Docker partagé Jenkins / SonarQube / SentimentAI
+resource "docker_network" "cicd" {
+  name = "cicd-network"
+}
+
+# Image Docker SentimentAI -- image locale buildée par Jenkins
+resource "docker_image" "sentiment" {
+  name         = "sentiment-ai:${var.image_tag}"
+  keep_locally = true
+}
+
+# Conteneur staging
+resource "docker_container" "sentiment_staging" {
+  name    = var.container_name
+  image   = docker_image.sentiment.image_id
+  restart = "unless-stopped"
+
+  networks_advanced {
+    name = docker_network.cicd.name
+  }
+
+  ports {
+    internal = 8000
+    external = var.app_port
+  }
+
+  env = [
+    "ENV=staging",
+    "LOG_LEVEL=INFO",
+  ]
+
+  # Attention : vérifie que 'curl' est installé dans ton image Docker
+  healthcheck {
+    test     = ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval = "30s"
+    timeout  = "10s"
+    retries  = 3
+  }
+}
+EOF
+```
+![image](https://hackmd.io/_uploads/SkfHs6fGMg.png)
+
+
+> **Anatomie des ressources**
+>
+> **`docker_network "cicd"`**
+> Crée (ou référence) le réseau `cicd-network` partagé entre Jenkins, SonarQube et SentimentAI. Si ce réseau existe déjà depuis le TP2, voir la section 3.3 pour l'importer dans le state.
+>
+> **`docker_image "sentiment"`**
+> - `name = "sentiment-ai:${var.image_tag}"` : référence l'image locale buildée par Jenkins — pas de `docker pull` depuis un registry distant, donc pas d'authentification nécessaire.
+> - `keep_locally = true` : indique à Terraform de **ne pas supprimer l'image locale** lors d'un `terraform destroy`. Sans ce paramètre, `destroy` effacerait l'image de votre machine.
+>
+> **`docker_container "sentiment_staging"`**
+> - `image = docker_image.sentiment.image_id` : référence l'**ID réel** de l'image (SHA256), pas son nom. Cela garantit que le conteneur utilise exactement l'image buildée, même si le tag `latest` a été réassigné entre-temps.
+> - `restart = "unless-stopped"` : le conteneur redémarre automatiquement après un crash ou un reboot, sauf s'il a été arrêté manuellement.
+> - `healthcheck` : Docker vérifie toutes les 30s que l'API répond sur `/health`. Après 3 échecs, le conteneur est marqué `unhealthy`.
+
+---
+
+### 2.4 Déclarer les outputs — `infra/outputs.tf`
+
+```bash
+cat > infra/outputs.tf << 'EOF'
+# infra/outputs.tf
+
+output "container_id" {
+  description = "ID du conteneur staging"
+  value       = docker_container.sentiment_staging.id
+}
+
+output "app_url" {
+  description = "URL de l'application staging"
+  value       = "http://localhost:${var.app_port}"
+}
+
+output "network_name" {
+  description = "Nom du réseau Docker créé"
+  value       = docker_network.cicd.name
+}
+EOF
+```
+![image](https://hackmd.io/_uploads/BkKBhaMzGx.png)
+
+
+> **À quoi servent les outputs ?**
+>
+> Les outputs sont les **valeurs que Terraform expose après un `apply`**. Ils permettent de consulter rapidement les informations clés sans fouiller dans `terraform.tfstate`.
+>
+> Usages concrets :
+> - `terraform output app_url` → affiche l'URL de staging dans les logs Jenkins.
+> - `terraform output -raw container_id` → récupère l'ID dans un script shell.
+> - Dans un pipeline CI/CD, le stage `Deploy Staging` peut utiliser `terraform output -raw app_url` pour construire l'URL de health check dynamiquement.
+
+---
+
+###  Question 2.1
+
+Expliquez la ligne `image = docker_image.sentiment.image_id`. Pourquoi utiliser cette référence plutôt que le nom de l'image directement ?
+
+**Réponse :** `docker_image.sentiment.image_id` référence le **SHA256 réel** de l'image, résolu par Terraform après avoir inspecté le daemon Docker. Utiliser directement `"sentiment-ai:latest"` serait une chaîne statique : si le tag `latest` est réassigné à une nouvelle image après le build, le conteneur pourrait pointer sur une version incorrecte. La référence par ID garantit la cohérence exacte.
+
+###  Question 2.2
+
+À quoi sert `keep_locally = true` sur la ressource `docker_image` ? Que se passerait-il sans ce paramètre lors d'un `terraform destroy` ?
+
+**Réponse :** Sans `keep_locally = true`, un `terraform destroy` supprimerait l'image locale `sentiment-ai` de votre machine. L'image ayant été buildée par Jenkins (potentiellement long), la perdre obligerait à relancer un build complet. Ce paramètre protège l'image locale tout en permettant de détruire le conteneur.
+
+---
+
+## 3. Exécuter Terraform
+
+> **Convention :** Toutes les commandes suivantes s'exécutent depuis le dossier `infra/`. Faites `cd infra/` une seule fois, ou utilisez `terraform -chdir=infra <commande>` depuis la racine du projet.
+
+### 3.1 Initialiser le provider
+
+```bash
+cd infra/
+terraform init
+```
+
+![image](https://hackmd.io/_uploads/HJ9i26fGMe.png)
+
+
+> `terraform init` télécharge le provider `kreuzwerker/docker` dans `.terraform/` et crée `.terraform.lock.hcl` qui fixe la version exacte utilisée. C'est l'équivalent d'un `npm install` ou `pip install` pour Terraform.
+
+---
+
+### 3.2 Vérifier la syntaxe
+
+```bash
+# Formater les fichiers (style canonique HCL)
+terraform fmt
+
+# Valider la syntaxe sans contacter Docker
+terraform validate
+# Success! The configuration is valid.
+```
+![image](https://hackmd.io/_uploads/r1W166Gzfx.png)
+
+
+> - `terraform fmt` : reformate les fichiers `.tf` selon le style officiel HCL (indentation, alignement). Idempotent — peut être intégré en pre-commit hook.
+> - `terraform validate` : vérifie la **syntaxe et la cohérence** de la configuration (références valides, types corrects) sans aucun appel au daemon Docker. Rapide, utile en CI sur toutes les branches.
+
+---
+
+### 3.3 Prévisualiser les changements
+
+```bash
+terraform plan
+```
+![image](https://hackmd.io/_uploads/BJMGapMzfx.png)
+
+
+> `terraform plan` calcule le **diff entre l'état désiré** (vos fichiers `.tf`) **et l'état actuel** (`.tfstate`). Il n'applique rien. C'est la commande à utiliser pour revue de code avant tout déploiement.
+
+#### Réseau cicd-network déjà existant
+
+Si `terraform apply` échoue avec `network with name cicd-network already exists` (créé manuellement au TP2/TP3), importez-le dans le state Terraform :
+
+```bash
+# Récupérer l'ID du réseau existant
+docker network inspect cicd-network --format '{{.Id}}'
+
+# Importer dans le state Terraform
+terraform import docker_network.cicd <ID_DU_RESEAU>
+```
+![image](https://hackmd.io/_uploads/rk6Ba6fMGe.png)
+![image](https://hackmd.io/_uploads/H1R_6TfGGg.png)
+
+
+Si un conteneur `sentiment-staging` existe déjà :
+
+```bash
+docker stop sentiment-staging
+docker rm sentiment-staging
+```
+
+---
+
+### 3.4 Appliquer et tester l'idempotence
+
+```bash
+# Créer le réseau, télécharger l'image, démarrer le conteneur
+terraform apply 
+# Taper 'yes' pour confirmer, ou -auto-approve pour Jenkins
+```
+![image](https://hackmd.io/_uploads/BJa4ApGfze.png)
+
+
+```bash
+# Vérifier que le conteneur tourne
+docker ps | grep sentiment-staging
+```
+![image](https://hackmd.io/_uploads/r1P8AaMMMg.png)
+
+```bash
+# Tester l'API
+curl http://localhost:8001/health
+```
+![image](https://hackmd.io/_uploads/S1TDApGfMe.png)
+
+
+```bash
+# Afficher les outputs calculés
+terraform output
+```
+![image](https://hackmd.io/_uploads/rJwcATMMze.png)
+
+```bash
+# Tester l'idempotence : relancer apply sans rien changer
+terraform apply -auto-approve
+# Résultat attendu : No changes. Your infrastructure matches the configuration.
+```
+![image](https://hackmd.io/_uploads/rySTCTzffe.png)
+
+
+> **Idempotence** : appliquer la même configuration plusieurs fois produit toujours le même résultat. Terraform compare l'état désiré à l'état réel et **ne modifie que ce qui diffère**. En CI/CD, cela garantit que relancer un pipeline ne crée pas de ressources dupliquées ni ne perturbe un environnement déjà conforme.
+
+---
+
+###  Question 3.1
+
+Faites un screenshot de `terraform plan` affichant les ressources à créer.
+
+![image](https://hackmd.io/_uploads/SkV-JAzGzl.png)
+
+
+
+###  Question 3.2
+
+Faites un screenshot de `terraform apply` réussi et de `terraform output`.
+
+![image](https://hackmd.io/_uploads/HJhGJCfGGx.png)
+![image](https://hackmd.io/_uploads/BJImJRGGzx.png)
+
+###  Question 3.3
+
+Faites un screenshot du 2e `terraform apply` confirmant l'idempotence (`No changes`). Expliquez en une phrase ce que garantit ce comportement en CI/CD.
+
+![image](https://hackmd.io/_uploads/SkzU1CzfMg.png)
+
+
+**Réponse :** L'idempotence garantit qu'un pipeline peut être rejoué sans risque de créer des ressources dupliquées ou de perturber un environnement déjà dans l'état désiré.
+
+###  Question 3.4
+
+Inspectez `terraform.tfstate` : quelles informations y trouvez-vous sur le conteneur staging ? Pourquoi ce fichier ne doit-il pas être dans Git ?
+![image](https://hackmd.io/_uploads/S1Pc1Cfffg.png)
+
+
+**Réponse :** `terraform.tfstate` contient les IDs des ressources créées, les valeurs des attributs (ports, variables d'environnement, ID de réseau…) et potentiellement des secrets. Le commiter exposerait ces informations sensibles et créerait des conflits lors de travail en équipe (chaque `apply` modifie le fichier). En production, on utilise un backend distant (S3, Terraform Cloud) avec verrouillage.
+
+---
+
+## 4. Intégration Jenkins
+
+### 4.1 Installer Terraform dans le conteneur Jenkins
+
+Le conteneur Jenkins tourne toujours sur Linux, quelle que soit la machine hôte. La méthode fiable est le téléchargement direct du binaire officiel (le dépôt APT HashiCorp est souvent incompatible avec la distribution Debian embarquée) :
+
+```bash
+docker exec -u root jenkins bash -c "
+  apt-get update -q &&
+  apt-get install -y wget unzip &&
+  wget https://releases.hashicorp.com/terraform/1.7.0/terraform_1.7.0_linux_amd64.zip &&
+  unzip terraform_1.7.0_linux_amd64.zip &&
+  mv terraform /usr/local/bin/ &&
+  terraform version
+"
+
+# Vérifier
+docker exec jenkins terraform version
+```
+![image](https://hackmd.io/_uploads/SyIwe0fzzx.png)
+![image](https://hackmd.io/_uploads/ryZFgAMzMx.png)
+
+
+> **Pourquoi `linux_amd64` même sur macOS ou Windows ?**
+> Le binaire à télécharger est toujours la version Linux car c'est le **conteneur Jenkins** qui exécute Terraform, pas la machine hôte. Docker Desktop sur macOS et Windows fait tourner les conteneurs dans une VM Linux x86-64.
+
+---
+
+
+
+### 4.2 Jenkinsfile — Pipeline 10 stages complet
+
+```bash
+cat > Jenkinsfile << 'EOF'
+pipeline {
+  agent any
+
+  environment {
+    IMAGE_NAME = 'sentiment-ai'
+    REGISTRY   = 'ghcr.io/dspitech'
+    REGISTRY_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
+    SONAR_HOST_URL = 'http://4.223.165.64:9000/'
+    SONAR_USER_TOKEN = 'sqa_5e07e6f28100271b73d2b76bcbc49d72e2bc70ee'
+  }
+
+  stages {
+    stage('1. Checkout') { steps { checkout scm; script { env.IMAGE_TAG = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim() } } }
+    stage('2. Lint') { steps { sh 'docker run --rm -v $WORKSPACE:/app -w /app python:3.12-slim sh -c "pip install flake8 -q && flake8 ."' } }
+    stage('3. Build') { steps { sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ." } }
+    stage('4. Test') { steps { sh "docker run --name test-runner ${IMAGE_NAME}:${IMAGE_TAG} pytest tests/ -v --cov=src --cov-report=xml:/tmp/coverage.xml --cov-fail-under=70" } }
+    stage('5. Extract Coverage') { steps { sh "docker cp test-runner:/tmp/coverage.xml ./coverage.xml && docker rm -f test-runner" } }
+    stage('6. Install Scanner') { steps { sh 'if [ ! -d "$HOME/.sonar/bin" ]; then mkdir -p $HOME/.sonar; curl -sSL https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip -o $HOME/.sonar/scanner.zip; unzip -q -o $HOME/.sonar/scanner.zip -d $HOME/.sonar/; mv $HOME/.sonar/sonar-scanner-5.0.1.3006-linux/* $HOME/.sonar/; rm $HOME/.sonar/scanner.zip; fi' } }
+    stage('7. Sonar Analysis') { steps { sh '$HOME/.sonar/bin/sonar-scanner -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_USER_TOKEN -Dsonar.projectKey=sentiment-ai -Dsonar.sources=src -Dsonar.python.coverage.reportPaths=coverage.xml' } }
+    stage('8. Quality Gate') { steps { sh 'STATUS=$(curl -s -u "$SONAR_USER_TOKEN:" "${SONAR_HOST_URL}api/qualitygates/project_status?projectKey=sentiment-ai" | grep -o \'"status":"[^"]*"\'); if [ "$STATUS" = \'"status":"ERROR"\' ]; then exit 1; fi' } }
+    stage('9. Push Image') { steps { sh 'docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY_IMAGE}:${IMAGE_TAG} && docker push ${REGISTRY_IMAGE}:${IMAGE_TAG}' } }
+    
+    stage('10. Deploy Terraform') {
+      steps {
+        script {
+          sh """
+            cat > deploy.sh << 'SCRIPT_EOF'
+#!/bin/sh
+# 1. On arrête et supprime le conteneur existant s'il tourne ou existe
+if [ \$(docker ps -aq -f name=sentiment-staging) ]; then
+    echo "Nettoyage : arrêt et suppression du conteneur existant..."
+    docker rm -f sentiment-staging
+fi
+
+# 2. On exécute le déploiement Terraform
+terraform init -upgrade
+terraform apply -auto-approve
+SCRIPT_EOF
+            chmod +x deploy.sh
+
+            docker build -t terraform-deploy -f- . <<DOCKERFILE
+FROM hashicorp/terraform:latest
+COPY infra/ /terraform/
+COPY deploy.sh /terraform/
+RUN rm -f /terraform/terraform.tfstate /terraform/terraform.tfstate.backup /terraform/.terraform.lock.hcl
+WORKDIR /terraform
+DOCKERFILE
+
+            docker run --rm \
+              --entrypoint /bin/sh \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v \${HOME}/.aws:/root/.aws \
+              -e TF_VAR_image_tag=${IMAGE_TAG} \
+              terraform-deploy /terraform/deploy.sh
+          """
+        }
+      }
+    }
+  }
+}
+EOF
+```
+![image](https://hackmd.io/_uploads/rJPx3gmzMg.png)
+
+
+#### Création du fichier deploy.sh
+
+```bash
+cat > deploy.sh << 'SCRIPT_EOF'
+#!/bin/sh
+terraform init -upgrade
+terraform import docker_network.cicd $(docker network inspect cicd-network --format='{{.Id}}') 2>/dev/null || true
+terraform apply -auto-approve
+SCRIPT_EOF
+```
+![image](https://hackmd.io/_uploads/H16bhlQMGg.png)
+
+
+> **IaC Validate vs IaC Apply — deux rôles distincts**
+>
+> | Stage | Branches | Commandes | Objectif |
+> |---|---|---|---|
+> | `IaC Validate` | Toutes | `fmt -check` + `validate` | Vérification syntaxique rapide en Fail Fast. `-backend=false` évite toute connexion distante. |
+> | `IaC Apply` | `main` seulement | `apply -auto-approve` | Provisionne l'infra réelle avec l'image du commit exact. |
+>
+> **Pourquoi `-var='image_tag=${IMAGE_TAG}'` ?**
+>
+> `IMAGE_TAG` est le hash court du commit Git (`git rev-parse --short HEAD`). En passant ce tag à Terraform, on s'assure que le conteneur staging fait toujours tourner **exactement le code du commit qui vient de passer tous les tests**. C'est une amélioration de traçabilité majeure par rapport au TP3 où le tag `latest` ne permettait pas de savoir quelle version était déployée.
+
+
+#### Test 
+```bash
+git add .
+git commit -m "ci: deploy full pipeline with terraform integration"
+git push origin main
+```
+![image](https://hackmd.io/_uploads/BkqtZCMGze.png)
+
+---
+
+###  Question 4.1
+
+Faites un screenshot du pipeline Jenkins avec les 10 stages tous verts.
+
+![image](https://hackmd.io/_uploads/BymunlXzMx.png)
+![image](https://hackmd.io/_uploads/Byco2eQzzx.png)
+
+
+
+###  Question 4.2
+
+Pourquoi `IaC Validate` s'exécute sur toutes les branches mais `IaC Apply` seulement sur `main` ?
+
+**Réponse :** `IaC Validate` est une vérification syntaxique légère (Fail Fast) : détecter une erreur HCL dès une feature branch évite de la découvrir sur `main`. `IaC Apply` provisionne de vraies ressources — le limiter à `main` garantit qu'on ne crée jamais d'environnement staging à partir d'un code non validé par la Quality Gate et non mergé.
+
+###  Question 4.3
+
+À quoi sert `-var='image_tag=${IMAGE_TAG}'` dans le stage `IaC Apply` ? En quoi cela améliore-t-il la traçabilité par rapport au TP3 ?
+
+**Réponse :** Le hash court Git passé comme `image_tag` lie l'image déployée à un commit précis. Au TP3, le tag `latest` ne permettait pas de savoir quelle version tournait en staging ; ici, `docker inspect sentiment-staging` révèle immédiatement le commit correspondant.
+
+---
+
+## 5. Pour aller plus loin — Autres Environnements
+
+Ce TP utilise le Docker provider pour apprendre Terraform sans compte cloud. En entreprise, le **même workflow** s'applique en changeant uniquement le provider.
+
+### 5.1 Cloud public
+
+| Provider | Service équivalent | Remplace | Coût |
+|---|---|---|---|
+| `provider "aws"` | ECS / EKS / EC2 | `docker_container` | Payant (Free Tier) |
+| `provider "google"` | Cloud Run / GKE | `docker_container` | Payant (300$ crédit) |
+| `provider "azurerm"` | ACI / AKS | `docker_container` | Payant (200$ crédit) |
+
+Le changement est minimal : remplacer le bloc `provider "docker"` par `provider "aws"` et les ressources `docker_container` par des ressources `aws_ecs_service`.
+
+### 5.2 Cloud local (self-hosted, sans frais)
+
+| Outil | Description |
+|---|---|
+| **Minikube / Kind** | Cluster Kubernetes local. Le provider `kubernetes` Terraform provisionne pods, services et ingress. |
+| **LocalStack** | Émule les services AWS (S3, EC2, Lambda, RDS) localement sur `http://localhost:4566`. |
+| **k3s** | Distribution Kubernetes ultra-légère, installable en une commande. |
+| **Vagrant + VirtualBox** | VMs locales via le provider `virtualbox`. Proche d'un environnement bare-metal. |
+
+### 5.3 Adaptation de SentimentAI
+
+Seuls 3 fichiers changent pour porter SentimentAI en production — le code applicatif et les TPs précédents restent intacts :
+
+| Fichier | TP4 (Docker local) | Production (ex: AWS) |
+|---|---|---|
+| `infra/main.tf` | `provider "docker"` | `provider "aws"` |
+| `infra/variables.tf` | `app_port = 8001` | `region = "eu-west-1"` |
+| `Jenkinsfile` | `terraform apply` | `terraform apply` (inchangé) |
+
+> **Principe fondamental :**
+> Apprendre Terraform avec le Docker provider, c'est apprendre Terraform tout court. Le workflow `init → plan → apply`, les variables, les outputs et l'idempotence fonctionnent **exactement de la même façon** sur AWS, GCP, Azure ou Kubernetes. Seul le provider et les noms de ressources changent.
+
+---
+
 
 
 
