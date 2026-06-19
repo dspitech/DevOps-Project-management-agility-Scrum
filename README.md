@@ -90,6 +90,8 @@ Untracked  ──git add──►  Staged  ──git commit──►  Committed
                                                    Remote (GitHub)
 ```
 
+>  **Explication du schéma :** Un fichier passe par trois états avant d'être partagé. `git add` le place dans la *staging area* (zone de préparation). `git commit` crée un instantané permanent dans l'historique local. `git push` envoie cet instantané vers le serveur distant (GitHub).
+
 #### Conventional Commits
 
 La convention **Conventional Commits** normalise les messages de commit pour les rendre lisibles par des humains et des outils (génération automatique de changelogs, déclenchement de pipelines).
@@ -154,6 +156,8 @@ RUN pip install -r req.txt     ← Layer 3 : change rarement → mis en cache !
 COPY src/ ./src/               ← Layer 4 : change souvent → invalidation ici
 ```
 
+>  **Explication du schéma :** Les layers sont empilés du plus stable (en haut) au plus volatile (en bas). Docker réutilise le cache de chaque layer tant que son contenu n'a pas changé. Ici, si seul un fichier `.py` dans `src/` est modifié, Docker réutilise les layers 1 à 3 depuis le cache et ne recalcule que le layer 4. Sans cette organisation, `pip install` serait relancé à chaque modification du code — ce qui peut prendre plusieurs minutes inutilement.
+
 Si seul un fichier dans `src/` change, Docker réutilise les layers 1, 2 et 3 depuis le cache et ne recalcule que la layer 4. Sans cette organisation, `pip install` serait relancé à chaque modification de code - ce qui prendrait plusieurs minutes.
 
 ---
@@ -208,33 +212,42 @@ Un **Makefile** est un fichier de recettes qui automatise des tâches répétiti
 # Cloner La configuration de la VM
 git clone https://github.com/dspitech/DevOps-VM-Ubuntu-Terraform-Azure.git
 ```
+
+>  **Explication :** Cette commande télécharge en local l'intégralité du dépôt Git contenant les fichiers Terraform préconfigurés pour créer une VM Ubuntu sur Azure. `git clone` copie tout l'historique et les fichiers dans un nouveau dossier portant le nom du dépôt.
+
 ![image](https://hackmd.io/_uploads/rk4_HQ-Gfx.png)
 
 ```powershell
 # Se placer dans le répertoire du projet
 cd DevOps-VM-Ubuntu-Terraform-Azure
 ```
+
+>  **Explication :** `cd` (change directory) déplace le terminal dans le dossier fraîchement cloné. Toutes les commandes suivantes s'exécuteront dans ce contexte.
+
 ![image](https://hackmd.io/_uploads/ryNqBXWzzg.png)
 ![image](https://hackmd.io/_uploads/Bym3HX-GMg.png)
 ![image](https://hackmd.io/_uploads/r1rCSX-fze.png)
-
 
 ```powershell
 chmod +x ./setup-backend.sh
 ./setup-backend.sh
 ```
+
+>  **Explication :** `chmod +x` rend le script `setup-backend.sh` exécutable (lui accorde la permission d'exécution). `./setup-backend.sh` lance ensuite ce script qui crée le backend Terraform distant sur Azure (un Storage Account) pour stocker le fichier d'état Terraform (`terraform.tfstate`) de manière sécurisée et partageable.
+
 ![image](https://hackmd.io/_uploads/SkTHL7WGze.png)
 ![image](https://hackmd.io/_uploads/HkFP87bGfe.png)
-
 
 ```powershell
 # vérifier le nom du Storage Account créé
 az storage account list --resource-group OpenLab-TFState-RG --query "[].name" -o tsv
 # Puis mettez-le dans backend.tf : storage_account_name = "openlabtfstate14523"   # ← le nom réel
 ```
+
+>  **Explication :** La commande `az storage account list` interroge Azure pour lister les comptes de stockage dans le groupe de ressources `OpenLab-TFState-RG`. L'option `--query "[].name"` filtre pour n'afficher que les noms, et `-o tsv` formate la sortie en texte brut sans guillemets. Le nom retourné doit ensuite être renseigné dans `backend.tf` pour que Terraform sache où stocker son état.
+
 ![image](https://hackmd.io/_uploads/By_FIQZzzx.png)
 ![image](https://hackmd.io/_uploads/BkoTLXWfMe.png)
-
 
 ```powershell
 # Initialiser Terraform (téléchargement des providers)
@@ -245,6 +258,16 @@ az storage account list --resource-group OpenLab-TFState-RG --query "[].name" -o
 
 terraform init && terraform fmt && terraform validate && terraform plan && terraform apply -auto-approve
 ```
+
+>  **Explication de la chaîne de commandes :**
+> - `terraform init` : télécharge les plugins (providers Azure) et initialise le backend distant configuré dans `backend.tf`.
+> - `terraform fmt` : reformate automatiquement les fichiers `.tf` selon les conventions Terraform (indentation, alignement).
+> - `terraform validate` : vérifie la syntaxe et la cohérence logique de la configuration sans contacter Azure.
+> - `terraform plan` : affiche un aperçu des ressources qui seront créées, modifiées ou détruites — aucune action réelle.
+> - `terraform apply -auto-approve` : déploie effectivement l'infrastructure sur Azure sans demander de confirmation interactive.
+>
+> L'opérateur `&&` enchaîne les commandes : si l'une échoue, les suivantes ne s'exécutent pas.
+
 ![image](https://hackmd.io/_uploads/rkmWvmZffe.png)
 ![image](https://hackmd.io/_uploads/S1CXv7-zGe.png)
 ![image](https://hackmd.io/_uploads/ByDiP7ZGMl.png)
@@ -254,6 +277,9 @@ terraform init && terraform fmt && terraform validate && terraform plan && terra
 # Télécharger la clé privée SSH générée par Terraform
 download ./openlab_rsa
 ```
+
+>  **Explication :** Terraform a généré une paire de clés SSH (publique/privée) lors du déploiement. `download` est une commande propre au Cloud Shell Azure qui transfère le fichier `openlab_rsa` (clé privée) vers l'ordinateur local. Cette clé est indispensable pour se connecter à la VM sans mot de passe.
+
 ![image](https://hackmd.io/_uploads/ByH6PmbGMx.png)
 
 ```powershell
@@ -261,8 +287,10 @@ download ./openlab_rsa
 # Sous Windows PowerShell :
 ssh -i "C:\Users\dev\Downloads\openlab_rsa" labadmin@4.225.216.24
 ```
-![image](https://hackmd.io/_uploads/S1sLuQ-GMx.png)
 
+>  **Explication :** `ssh -i` spécifie la clé privée à utiliser pour l'authentification. `labadmin` est le nom d'utilisateur configuré dans Terraform. `4.225.216.24` est l'adresse IP publique de la VM créée sur Azure. Cette commande ouvre un terminal distant sécurisé sur la VM Ubuntu.
+
+![image](https://hackmd.io/_uploads/S1sLuQ-GMx.png)
 
 ## 1. Git - Initialiser le projet
 
@@ -275,6 +303,9 @@ ssh -i "C:\Users\dev\Downloads\openlab_rsa" labadmin@4.225.216.24
 ```bash
 docker --version && docker compose version && make --version | head -n 1 && git --version
 ```
+
+>  **Explication :** Cette commande vérifie que tous les outils requis sont installés et fonctionnels. Chaque `--version` affiche la version installée de l'outil. L'opérateur `&&` garantit que toutes les commandes s'exécutent en séquence et qu'une éventuelle erreur interrompt la chaîne. `| head -n 1` limite l'affichage de `make` à la première ligne pour éviter un affichage trop verbeux.
+
 ![image](https://hackmd.io/_uploads/rJDJYmbffx.png)
 
 Git est le système de contrôle de version utilisé tout au long de la formation. Chaque modification du code est tracée sous forme de commit. GitHub sera l'hébergeur distant : c'est là que Jenkins ira chercher le code à chaque déclenchement du pipeline.
@@ -293,6 +324,9 @@ Connectez-vous à GitHub et créez un nouveau repository **public** avec les par
 # Se connecter à Github
 gh auth login
 ```
+
+>  **Explication :** `gh` est le CLI officiel de GitHub. `gh auth login` lance un processus d'authentification interactif : il demande le type d'hébergeur (github.com), le protocole (HTTPS ou SSH), puis ouvre un navigateur ou propose un code à saisir sur github.com pour associer le terminal à votre compte GitHub. Une fois authentifié, toutes les commandes `gh` s'exécuteront en votre nom.
+
 ![image](https://hackmd.io/_uploads/rkZMYQWfGx.png)
 ![image](https://hackmd.io/_uploads/Bk_mK7-Mfe.png)
 ![image](https://hackmd.io/_uploads/HkX4t7Zffx.png)
@@ -309,6 +343,15 @@ gh repo create sentiment-ai \
   --license MIT \
   --gitignore Python
 ```
+
+>  **Explication :** `gh repo create` crée un nouveau dépôt directement sur GitHub sans passer par l'interface web.
+> - `sentiment-ai` : nom du dépôt.
+> - `--public` : rend le dépôt accessible à tous (nécessaire pour Jenkins et les webhooks).
+> - `--license MIT` : ajoute automatiquement un fichier `LICENSE` avec la licence MIT.
+> - `--gitignore Python` : génère un `.gitignore` préconfiguré pour les projets Python (exclut `__pycache__/`, `.venv/`, `*.pyc`, etc.).
+>
+> Le backslash `\` en fin de ligne permet de continuer la commande sur la ligne suivante pour améliorer la lisibilité.
+
 > **Pourquoi cocher le `.gitignore` Python dès la création ?**  
 > GitHub génère un fichier préconfiguré qui exclut déjà `__pycache__/`, `.venv/`, `*.pyc` et autres artefacts Python indésirables, évitant toute configuration manuelle.
 ![image](https://hackmd.io/_uploads/rk9CY7bfMe.png)
@@ -323,17 +366,26 @@ Une fois le repository créé, clonez-le localement. Remplacez `VOTRE_PSEUDO` pa
 # Cloner le repo localement
 git clone https://github.com/dspitech/sentiment-ai.git
 ```
+
+>  **Explication :** `git clone` télécharge l'intégralité du dépôt distant (code + historique complet) dans un nouveau dossier local nommé `sentiment-ai`. Il configure automatiquement le remote `origin` pointant vers l'URL GitHub, ce qui permettra ensuite de faire `git push origin main` sans configurer manuellement la destination.
+
 ![image](https://hackmd.io/_uploads/BkeEcm-zfe.png)
 
 ```bash
 # Configurer votre identité Git globale (si pas encore fait)
 git config --global user.name "Pape Lo"
 git config --global user.email "pape.lo@estiam.com"
+```
+
+>  **Explication :** Ces deux commandes définissent l'identité qui apparaîtra dans chaque commit. `--global` applique la configuration à tous les dépôts Git de l'utilisateur (stockée dans `~/.gitconfig`). Sans cette configuration, Git refusera de créer des commits. En contexte professionnel, ces informations doivent correspondre à votre identité réelle car elles sont visibles dans l'historique public du dépôt.
 
 ```bash
 # Vérification
 git config --global --list
 ```
+
+>  **Explication :** Affiche toutes les configurations Git globales définies dans `~/.gitconfig`. Permet de vérifier que `user.name` et `user.email` sont correctement renseignés avant de commencer à travailler.
+
 ![image](https://hackmd.io/_uploads/SJ8ucQbzze.png)
 
 ```bash
@@ -341,12 +393,17 @@ git config --global --list
 git status
 ```
 
+>  **Explication :** `git status` affiche l'état actuel du dépôt : fichiers modifiés, fichiers en staging, et fichiers non trackés. Un dépôt fraîchement cloné avec le message "nothing to commit, working tree clean" confirme que tout est synchronisé avec le remote.
+
 ![image](https://hackmd.io/_uploads/ByxVimZzze.png)
 
 ```bash
 # Consulter l'historique : un seul commit initial (le README)
 git log --oneline
 ```
+
+>  **Explication :** `git log` affiche l'historique des commits. L'option `--oneline` condense chaque commit sur une ligne (hash court + message). À ce stade, un seul commit créé par GitHub lors de l'initialisation du dépôt (avec README, .gitignore et LICENSE) devrait apparaître.
+
 ![image](https://hackmd.io/_uploads/HJdBjmWGMg.png)
 
 > **Identité Git et traçabilité**  
@@ -370,6 +427,11 @@ touch requirements.txt Dockerfile docker-compose.yml .dockerignore Makefile
 # Vérifier la structure complète créée
 find . -not -path './.git/*' | sort
 ```
+
+>  **Explication des commandes :**
+> - `mkdir -p` : crée les répertoires et tous les répertoires parents manquants en une seule commande (`-p` = parents). Sans `-p`, si `src` n'existait pas, `mkdir src/tests` échouerait.
+> - `touch` : crée des fichiers vides s'ils n'existent pas, ou met à jour leur date de modification s'ils existent déjà. Permet de créer plusieurs fichiers en une seule commande.
+> - `find . -not -path './.git/*' | sort` : liste récursivement tous les fichiers et dossiers du projet (`.`) en excluant le dossier `.git` (historique interne de Git), puis trie le résultat alphabétiquement pour une visualisation claire de la structure.
 
 **Structure attendue :**
 
@@ -418,6 +480,13 @@ class PredictionResponse(BaseModel):
     text: str  # Texte original retourné pour traçabilité
 EOF
 ```
+
+>  **Explication du code `schemas.py` :**
+> - `cat > fichier <<'EOF' ... EOF` : redirige le texte entre les deux `EOF` vers le fichier. C'est un *heredoc* shell qui permet d'écrire un fichier multi-lignes en une seule commande.
+> - `BaseModel` (Pydantic) : classe parente qui active la validation automatique des données. Toute instance de `PredictionRequest` aura son champ `text` validé dès la création.
+> - `Field(..., min_length=1, max_length=5000)` : le `...` signifie que le champ est **obligatoire** (pas de valeur par défaut). `min_length=1` rejette les chaînes vides, `max_length=5000` protège contre les payloads trop lourds.
+> - `Literal["POSITIVE", "NEGATIVE", "NEUTRAL"]` : contraint le champ `label` à exactement ces trois valeurs. Pydantic lèvera une erreur de validation si une autre valeur est retournée — garantissant la cohérence du contrat d'API.
+
 ![image](https://hackmd.io/_uploads/B1az3Q-MMl.png)
 
 
@@ -476,6 +545,14 @@ class SentimentModel:
         }
 EOF
 ```
+
+>  **Explication du code `model.py` :**
+> - `__init__` : méthode constructeur appelée lors de l'instanciation du modèle. Le `print` est volontaire : il apparaîtra dans `docker logs sentiment`, confirmant que le modèle a bien été chargé au démarrage.
+> - `text.lower()` : normalise le texte en minuscules pour que la recherche de mots-clés soit insensible à la casse ("BIEN", "Bien" et "bien" donnent le même résultat).
+> - `sum(1 for w in positive_words if w in text_lower)` : expression génératrice qui compte combien de mots de la liste apparaissent dans le texte. Plus efficace en mémoire qu'un `len([...])` équivalent.
+> - `round(0.6 + 0.1 * pos, 2)` : calcule un score de confiance proportionnel au nombre de mots positifs trouvés. Le score minimal est 0.60 (1 mot), augmente de 0.10 par mot supplémentaire. `round(..., 2)` arrondit à 2 décimales pour éviter les imprécisions flottantes comme `0.7000000001`.
+> - Si `pos == neg` (égalité ou aucun mot trouvé), le label `NEUTRAL` est retourné avec un score fixe de `0.5`.
+
 ![image](https://hackmd.io/_uploads/BkaL27bfze.png)
 
 #### 1.4.3 `src/main.py` - Application FastAPI
@@ -514,6 +591,13 @@ def predict(request: PredictionRequest):
     return model.predict(request.text)
 EOF
 ```
+
+>  **Explication du code `main.py` :**
+> - `FastAPI(title=..., version=...)` : crée l'application avec des métadonnées visibles dans la documentation automatique Swagger UI à l'adresse `/docs`.
+> - `model = SentimentModel()` : instanciation **unique** du modèle au niveau module. FastAPI charge le modèle une seule fois au démarrage du serveur — pas à chaque requête. C'est crucial pour les performances.
+> - `@app.get("/health")` : décorateur FastAPI qui enregistre la fonction `health()` comme handler de la route `GET /health`. Retourner un dictionnaire Python est automatiquement converti en JSON.
+> - `@app.post("/predict", response_model=PredictionResponse)` : `response_model` indique à FastAPI de valider la réponse avec le schéma Pydantic `PredictionResponse` avant de la renvoyer — protégeant les clients d'une réponse malformée.
+
 ![image](https://hackmd.io/_uploads/rkVi27bMzx.png)
 
 #### 1.4.4 `tests/test_api.py` - Tests unitaires et d'intégration
@@ -584,8 +668,14 @@ def test_predict_neutral():
     assert data["score"] == 0.5
 EOF
 ```
-![image](https://hackmd.io/_uploads/B1iA3mbMGg.png)
 
+>  **Explication du code `test_api.py` :**
+> - `TestClient(app)` : client HTTP de test fourni par FastAPI (via Starlette). Il simule des requêtes HTTP réelles **sans démarrer de vrai serveur** — les tests sont donc rapides et exécutables sans réseau.
+> - `assert r.status_code == 200` : vérifie que le serveur a répondu avec le code HTTP 200 (succès). Si la condition est fausse, pytest lève une `AssertionError` et marque le test en échec.
+> - `test_predict_empty_fails` : teste un cas d'erreur volontaire. Envoyer `{"text": ""}` doit déclencher la validation Pydantic (`min_length=1`) et retourner HTTP 422 (Unprocessable Entity). Tester les chemins d'erreur est aussi important que tester les chemins de succès.
+> - `test_predict_neutral` : l'assertion `== 0.5` (pas `>= 0.5`) vérifie la valeur exacte, garantissant que la logique du modèle n'a pas changé.
+
+![image](https://hackmd.io/_uploads/B1iA3mbMGg.png)
 
 #### 1.4.5 `requirements.txt` - Dépendances Python
 
@@ -599,6 +689,15 @@ pytest-cov==4.1.0
 httpx==0.26.0
 EOF
 ```
+
+>  **Explication de `requirements.txt` :**
+> - Ce fichier liste toutes les dépendances Python du projet avec leurs versions **exactement épinglées** (opérateur `==`). `pip install -r requirements.txt` installe exactement ces versions, pas de plus récentes.
+> - `fastapi` + `uvicorn` : le framework web et son serveur ASGI pour servir l'API.
+> - `pydantic` : moteur de validation des données utilisé par FastAPI.
+> - `pytest` + `pytest-cov` : framework de tests et plugin de couverture de code (génère `coverage.xml` pour SonarQube au TP3).
+> - `httpx` : client HTTP asynchrone requis par `TestClient` de FastAPI pour simuler les requêtes dans les tests.
+> - L'épinglage des versions garantit que l'environnement de développement, Docker, Jenkins et la production sont **identiques**. Sans épinglage, `pip install fastapi` installerait la dernière version disponible, qui pourrait introduire des incompatibilités sans prévenir.
+
 ![image](https://hackmd.io/_uploads/HkgMamZGMg.png)
 
 > Les versions sont **épinglées** (numéros exacts). C'est une bonne pratique DevOps : elle garantit que le même environnement est recréé identiquement en local, dans Docker, dans Jenkins et en production.
@@ -622,6 +721,14 @@ git push origin main
 # Vérifier que le commit apparaît bien dans l'historique
 git log --oneline
 ```
+
+>  **Explication des commandes Git :**
+> - `git add .` : ajoute **tous** les fichiers modifiés et non trackés du répertoire courant à la staging area. Le `.` désigne le répertoire courant et tous ses sous-dossiers.
+> - `git diff --staged --stat` : affiche un résumé statistique des changements qui seront inclus dans le prochain commit (nombre de lignes ajoutées/supprimées par fichier). `--staged` cible les fichiers déjà ajoutés avec `git add`. Bonne pratique avant de commiter pour éviter d'inclure des fichiers non voulus.
+> - `git commit -m "feat: initialiser la structure SentimentAI"` : crée un commit avec le message spécifié. Le préfixe `feat:` respecte la convention Conventional Commits.
+> - `git push origin main` : envoie les commits locaux vers le remote `origin` (GitHub) sur la branche `main`.
+> - `git log --oneline` : confirme que le nouveau commit apparaît bien dans l'historique avec son hash et son message.
+
 ![image](https://hackmd.io/_uploads/rJYcpQZfGx.png)
 ![image](https://hackmd.io/_uploads/r1g66m-GMl.png)
 ![image](https://hackmd.io/_uploads/r1d0pXbGfe.png)
@@ -664,6 +771,15 @@ EXPOSE 8000
 # Commande de démarrage du serveur Uvicorn
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
+
+>  **Explication du Dockerfile :**
+> - `FROM python:3.11-slim` : image de base officielle Python 3.11 en version allégée (~150 Mo vs ~900 Mo pour la version complète). Contient uniquement le minimum pour exécuter Python.
+> - `WORKDIR /app` : définit `/app` comme répertoire de travail dans le conteneur. Toutes les commandes suivantes (`COPY`, `RUN`, `CMD`) s'exécuteront depuis ce répertoire. S'il n'existe pas, Docker le crée automatiquement.
+> - `COPY requirements.txt .` : copie **uniquement** le fichier de dépendances en premier. Cette couche est mise en cache et ne sera recalculée que si `requirements.txt` change — pas si le code source change.
+> - `RUN pip install --no-cache-dir -r requirements.txt` : installe toutes les dépendances. `--no-cache-dir` évite que pip stocke les archives téléchargées dans l'image, réduisant la taille finale.
+> - `EXPOSE 8000` : documentation du port utilisé (n'ouvre pas réellement le port — c'est `-p` lors de `docker run` qui le fait).
+> - `CMD [...]` : commande exécutée au démarrage du conteneur. `src.main:app` indique à Uvicorn le module (`src.main`) et l'objet FastAPI (`app`) à servir. `--host 0.0.0.0` écoute sur toutes les interfaces réseau du conteneur.
+
 ![image](https://hackmd.io/_uploads/SkVwCQWGGe.png)
 
 > **Pourquoi `python:3.11-slim` et non `python:3.11` ?**  
@@ -699,7 +815,13 @@ coverage.xml
 .terraform/
 EOF
 ```
-![image](https://hackmd.io/_uploads/r1ABJ4Zffg.png)
+
+>  **Explication du `.dockerignore` :**
+> - Le `.dockerignore` fonctionne comme le `.gitignore` mais pour le **contexte de build Docker**. Avant d'exécuter le Dockerfile, Docker envoie tous les fichiers du répertoire courant au daemon Docker. Sans `.dockerignore`, le dossier `.git/` (qui peut peser plusieurs centaines de Mo) serait envoyé inutilement à chaque build.
+> - `.git/` et `.github/` : l'historique Git et les workflows ne sont jamais nécessaires à l'intérieur du conteneur.
+> - `__pycache__/`, `*.pyc`, `*.pyo` : artefacts compilés Python spécifiques à la machine hôte, inutiles voire problématiques dans le conteneur (bytecode incompatible avec la version Python du conteneur).
+> - `.env`, `.env.*` : protection critique contre la fuite accidentelle de secrets (tokens, mots de passe, clés API) dans l'image Docker publiée sur un registry public.
+> - `*.tfstate`, `.terraform/` : les fichiers d'état Terraform contiennent des informations sensibles sur l'infrastructure.
 
 ### 2.3 Builder et tester l'image
 
@@ -707,20 +829,33 @@ EOF
 # Construire l'image et la tagger "sentiment-ai:latest"
 docker build -t sentiment-ai:latest .
 ```
+
+>  **Explication :** `docker build` exécute chaque instruction du Dockerfile dans l'ordre pour construire une image.
+> - `-t sentiment-ai:latest` : donne un nom (`sentiment-ai`) et un tag (`latest`) à l'image résultante. Sans tag, l'image ne serait accessible que par son hash SHA256.
+> - `.` : indique le répertoire courant comme contexte de build (filtré par `.dockerignore`).
+
 ![image](https://hackmd.io/_uploads/B13iyNbMMg.png)
 ![image](https://hackmd.io/_uploads/rkTpy4ZGzl.png)
-
 
 ```bash
 # Lancer le conteneur en arrière-plan (-d) avec redirection de port
 docker run -d --name sentiment -p 8080:8000 sentiment-ai:latest
 ```
+
+>  **Explication :** `docker run` crée et démarre un conteneur depuis l'image.
+> - `-d` (detached) : démarre le conteneur en arrière-plan, libérant le terminal.
+> - `--name sentiment` : donne un nom lisible au conteneur (sinon Docker génère un nom aléatoire comme `funny_einstein`). Ce nom peut être utilisé dans les commandes suivantes (`docker logs sentiment`, `docker stop sentiment`).
+> - `-p 8080:8000` : mappe le port `8080` de l'hôte vers le port `8000` du conteneur. Les requêtes arrivant sur `localhost:8080` sont redirigées vers l'application FastAPI écoutant sur le port `8000` à l'intérieur du conteneur.
+
 ![image](https://hackmd.io/_uploads/SJWllVbMGx.png)
 
 ```bash
 # Vérifier que le conteneur est bien démarré
 docker ps
 ```
+
+>  **Explication :** `docker ps` liste tous les conteneurs **en cours d'exécution**. On vérifie que le conteneur `sentiment` apparaît dans la liste avec le statut `Up` et le port mapping `0.0.0.0:8080->8000/tcp`. `docker ps -a` afficherait aussi les conteneurs arrêtés.
+
 ![image](https://hackmd.io/_uploads/SJvZeEZGMe.png)
 
 ```bash
@@ -728,6 +863,8 @@ docker ps
 curl http://localhost:8080/health
 # Réponse attendue : {"status":"ok"}
 ```
+
+>  **Explication :** `curl` envoie une requête HTTP GET à l'URL spécifiée et affiche la réponse dans le terminal. La réponse `{"status":"ok"}` confirme que le serveur FastAPI est démarré, le modèle est chargé, et l'endpoint `/health` répond correctement. C'est le test de fumée minimal avant de tester les endpoints fonctionnels.
 
 ![image](https://hackmd.io/_uploads/SJqml4ZGfl.png)
 
@@ -738,20 +875,33 @@ curl -X POST http://localhost:8080/predict \
   -d '{"text": "Ce produit est excellent !"}'
 # Réponse attendue : {"label":"POSITIVE","score":0.7,"text":"..."}
 ```
-![image](https://hackmd.io/_uploads/SkKUlEZGMg.png)
 
+>  **Explication :** `curl -X POST` envoie une requête HTTP POST.
+> - `-H "Content-Type: application/json"` : en-tête indiquant que le corps de la requête est du JSON. Sans cet en-tête, FastAPI ne saurait pas comment interpréter les données.
+> - `-d '{"text": "..."}'` : le corps (body) de la requête au format JSON. FastAPI le désérialise et le valide via Pydantic avant de l'envoyer à `model.predict()`.
+> - La réponse attendue `{"label":"POSITIVE","score":0.7,...}` confirme que le mot "excellent" a été détecté dans la liste `positive_words` et que le modèle fonctionne correctement.
+
+![image](https://hackmd.io/_uploads/SkKUlEZGMg.png)
 
 ```bash
 # Consulter les logs du conteneur pour vérifier le démarrage
 docker logs sentiment
 ```
-![image](https://hackmd.io/_uploads/SynPxVWMzl.png)
 
+>  **Explication :** `docker logs` affiche la sortie standard (stdout/stderr) du conteneur. On devrait y voir le message `[SentimentModel] Modèle chargé` (du `print` dans `model.py`) et les logs de démarrage d'Uvicorn confirmant qu'il écoute sur le port 8000.
+
+![image](https://hackmd.io/_uploads/SynPxVWMzl.png)
 
 ```bash
 # Nettoyer : arrêter et supprimer le conteneur
 docker stop sentiment && docker rm sentiment
 ```
+
+>  **Explication :** Séquence obligatoire de nettoyage en deux étapes.
+> - `docker stop sentiment` : envoie SIGTERM au processus principal du conteneur et attend 10 secondes qu'il s'arrête proprement. Si le processus ne répond pas, Docker envoie SIGKILL pour forcer l'arrêt.
+> - `docker rm sentiment` : supprime définitivement le conteneur arrêté. Sans cette étape, le nom `sentiment` serait réservé et un prochain `docker run --name sentiment` échouerait avec "name already in use".
+> - `&&` : `docker rm` ne s'exécute que si `docker stop` a réussi.
+
 ![image](https://hackmd.io/_uploads/ry9cg4WGGl.png)
 
 > **`docker stop` vs `docker rm`**  
@@ -793,8 +943,18 @@ networks:
     driver: bridge
 EOF
 ```
-![image](https://hackmd.io/_uploads/H1jAgV-Mze.png)
 
+>  **Explication du `docker-compose.yml` :**
+> - `version: '3.9'` : version de la syntaxe Compose compatible avec Docker Engine 19.03+ et supportant toutes les fonctionnalités utilisées ici.
+> - `build: .` : indique à Compose de builder l'image depuis le `Dockerfile` du répertoire courant (`.`) plutôt que de la télécharger depuis un registry.
+> - `container_name: sentiment-staging` : nom fixe du conteneur, permettant de le référencer facilement dans les scripts.
+> - `ports: "8080:8000"` : équivalent du `-p 8080:8000` de `docker run`. Format `hôte:conteneur`.
+> - `environment: ENV=development` : injecte une variable d'environnement dans le conteneur. L'application peut lire `os.environ["ENV"]` pour adapter son comportement.
+> - `restart: unless-stopped` : le conteneur redémarre automatiquement en cas de crash, **sauf** s'il a été arrêté manuellement avec `docker compose stop`.
+> - `healthcheck` : sonde périodique pour vérifier la santé du service. `start_period: 10s` donne un délai de grâce au démarrage de l'application avant que les échecs ne comptent.
+> - `networks: cicd-network` : réseau Docker personnalisé. Les conteneurs d'un même réseau peuvent se contacter par leur nom de service (ex. `http://sentiment-ai:8000`) sans connaître leurs IPs.
+
+![image](https://hackmd.io/_uploads/H1jAgV-Mze.png)
 
 > **Pourquoi un réseau `cicd-network` dédié ?**  
 > Les conteneurs d'un même réseau Docker nommé se découvrent par leur nom de service (DNS interne). Dans les TPs suivants, Jenkins contactera SonarQube via `http://sonarqube:9000` plutôt qu'une IP instable.
@@ -805,39 +965,52 @@ EOF
 # Démarrer la stack en arrière-plan (-d = detached)
 docker compose up -d
 ```
-![image](https://hackmd.io/_uploads/HJrmbNWGMg.png)
 
+>  **Explication :** `docker compose up` lit `docker-compose.yml`, build ou télécharge les images nécessaires, crée les réseaux et volumes déclarés, puis démarre tous les services. `-d` (detached) libère le terminal après le démarrage. Si l'image n'existe pas encore localement, Compose la build automatiquement grâce à `build: .`.
+
+![image](https://hackmd.io/_uploads/HJrmbNWGMg.png)
 
 ```bash
 # Vérifier l'état des services (attendre ~30s pour le healthcheck)
 docker compose ps
 ```
-![image](https://hackmd.io/_uploads/HyWHW4bMzl.png)
 
+>  **Explication :** Affiche l'état de chaque service défini dans `docker-compose.yml`. Après le délai `start_period` (10s) et si les premières sondes réussissent, le statut passe de `starting` à `healthy`. Un statut `unhealthy` indique que l'application ne répond pas correctement à `/health`.
+
+![image](https://hackmd.io/_uploads/HyWHW4bMzl.png)
 
 ```bash
 # Tester que l'API répond correctement
 curl http://localhost:8080/health
 ```
-![image](https://hackmd.io/_uploads/rJsLZNWGzx.png)
 
+>  **Explication :** Même test que précédemment mais cette fois via Docker Compose. Confirme que le port mapping, le réseau et l'application fonctionnent correctement dans la configuration déclarative.
+
+![image](https://hackmd.io/_uploads/rJsLZNWGzx.png)
 
 ```bash
 # Suivre les logs en temps réel (Ctrl+C pour quitter)
 docker compose logs -f sentiment-ai
 ```
-![image](https://hackmd.io/_uploads/ryyKW4WMGe.png)
 
+>  **Explication :** `docker compose logs -f` (follow) affiche les logs de tous les services en temps réel, colorés par service si plusieurs tournent. Permet de déboguer les erreurs de démarrage ou de surveiller l'activité en direct. `Ctrl+C` arrête le suivi sans arrêter le conteneur.
+
+![image](https://hackmd.io/_uploads/ryyKW4WMGe.png)
 
 ```bash
 # Arrêter et supprimer les conteneurs (réseau et volumes conservés)
 docker compose down
 ```
 
+>  **Explication :** `docker compose down` arrête et supprime proprement tous les conteneurs et le réseau créés par `docker compose up`. Contrairement à `docker compose stop` (qui arrête sans supprimer), `down` nettoie complètement. Les **volumes nommés** sont conservés par défaut — il faut ajouter `-v` pour les supprimer.
+
 ```bash
 # Pour tout supprimer y compris les volumes :
 docker compose down -v
 ```
+
+>  **Explication :** `-v` supprime également les volumes Docker associés aux services. À utiliser avec précaution : toutes les données persistées (bases de données, fichiers) seront perdues. Dans ce TP, aucun volume de données n'est utilisé (pas de base de données), donc `-v` est sans risque.
+
 ![image](https://hackmd.io/_uploads/BkX6b4-GGl.png)
 
 ---
@@ -883,7 +1056,14 @@ tag:
 	git push origin v0.1.0
 EOF
 ```
-![image](https://hackmd.io/_uploads/ry57fEbMze.png)
+
+>  **Explication du Makefile :**
+> - `IMAGE_NAME = sentiment-ai` : variable Makefile réutilisable dans toutes les cibles via `$(IMAGE_NAME)`. Modifier cette valeur une seule fois la propage partout.
+> - `.PHONY: build run test stop clean tag` : déclare ces cibles comme "phony" (fictives). Sans cela, si un fichier nommé `build` existait dans le projet, `make build` ne ferait rien (considérant que la cible est "à jour"). `.PHONY` force toujours l'exécution.
+> - `build:` → `docker build -t $(IMAGE_NAME):latest .` : build l'image Docker avec le tag `latest`.
+> - `test:` → lance pytest **à l'intérieur d'un conteneur Docker** (`docker run --rm`). `-v $(PWD):/app` monte le répertoire courant dans le conteneur. `--cov=src --cov-report=term-missing` active la mesure de couverture de code sur le package `src/` et affiche les lignes non couvertes.
+> - `clean:` → `docker rmi ... || true` : supprime l'image Docker. `|| true` évite que `make clean` échoue si l'image n'existe pas.
+> - `tag:` → crée un tag annoté Git (`-a`) avec un message (`-m`) et le pousse vers GitHub. Les tags annotés sont visibles dans l'onglet "Releases" de GitHub.
 
 > **Pourquoi tester dans le conteneur ?**  
 > Cela garantit que les tests s'exécutent dans le même environnement que la production. Un test qui passe localement mais échoue dans Docker révèle une dépendance manquante ou une hypothèse incorrecte sur l'environnement.
@@ -893,8 +1073,10 @@ EOF
 ```bash
 make test
 ```
-![image](https://hackmd.io/_uploads/SyP8S4-zfx.png)
 
+>  **Explication :** `make test` exécute la recette `test` du Makefile, qui lance pytest dans un conteneur Docker éphémère (`--rm` = supprimé après exécution). La sortie affiche les résultats de chaque test (✓ vert / ✗ rouge) et le rapport de couverture de code indiquant quelles lignes de `src/` ne sont pas couvertes par les tests.
+
+![image](https://hackmd.io/_uploads/SyP8S4-zfx.png)
 
 ### 4.3 Créer le tag de version v0.1.0
 
@@ -908,6 +1090,12 @@ git tag -l
 # Vérifier que le tag apparaît dans l'historique
 git log --oneline --decorate
 ```
+
+>  **Explication :**
+> - `make tag` : exécute les deux commandes de la cible `tag` du Makefile — crée le tag annoté puis le pousse vers GitHub.
+> - `git tag -l` : liste tous les tags existants localement. Doit afficher `v0.1.0`.
+> - `git log --oneline --decorate` : affiche l'historique des commits avec les tags et branches associés. Le tag `v0.1.0` devrait apparaître à côté du commit courant, ex. : `a3f8c12 (HEAD -> main, tag: v0.1.0, origin/main) feat: ...`.
+
 ![image](https://hackmd.io/_uploads/HJH0fEWzMg.png)
 ![image](https://hackmd.io/_uploads/SynkmEbMGg.png)
 ![image](https://hackmd.io/_uploads/SkzX7N-MMx.png)
@@ -1061,19 +1249,22 @@ En production, les tags annotés permettent de savoir **qui** a validé la mise 
 | Screenshot `docker compose ps` | Conteneur en statut `healthy` |
 | Réponses aux questions | Sections 5.1 à 5.7 complétées |
 
-### Prérequis pour le TP2
-
-Le TP2 installera Jenkins via Docker et créera un pipeline Groovy (`Jenkinsfile`) complet avec les stages : **Checkout → Lint → Build → Test → Push**. Avant de passer au TP2, vérifiez que :
-
-- Votre repo `sentiment-ai` est accessible **publiquement** sur GitHub
-- La commande `make test` passe avec **3 tests verts**
-- L'image Docker se build sans erreur avec `docker build`
 
 ---
 
 # TP 2 - Jenkins Pipeline CI/CD
 
 > **Formation DevOps** · Pipeline automatisé build / test / push pour le projet **SentimentAI**
+
+### Roadmap de la formation
+
+| TP | Contenu |
+|----|---------|
+| TP 1  | Git, Docker Compose, SentimentAI v0.1 |
+| **TP 2** ← vous êtes ici | Jenkins pipeline - build, test, push |
+| TP 3 | SonarQube, Trivy - Qualité & Sécurité |
+| TP 4 | Terraform IaC, Docker provider |
+| TP 5 | Monitoring, Prometheus, Grafana |
 
 ---
 
@@ -1090,15 +1281,16 @@ Le TP2 installera Jenkins via Docker et créera un pipeline Groovy (`Jenkinsfile
 | Automatiser le déclenchement | Webhook GitHub ou Poll SCM fonctionnel |
 | Pousser l'image vers le registry | Image visible dans GitHub Packages (`ghcr.io`) |
 
-### Roadmap de la formation
 
-```
-TP1              TP2              TP3              TP4              TP5
-Git + Docker  →  Jenkins      →  SonarQube    →  Terraform    →  Monitoring
-+ Compose        Pipeline         + Trivy          IaC Docker      Prometheus
-SentimentAI      build+test       Qualité &                        + Grafana
-v0.1             +push            Sécurité
-```
+### Prérequis pour le TP2
+
+Le TP2 installera Jenkins via Docker et créera un pipeline Groovy (`Jenkinsfile`) complet avec les stages : **Checkout → Lint → Build → Test → Push**. Avant de passer au TP2, vérifiez que :
+
+- Votre repo `sentiment-ai` est accessible **publiquement** sur GitHub
+- La commande `make test` passe avec **3 tests verts**
+- L'image Docker se build sans erreur avec `docker build`
+
+>  **Explication du schéma :** Cette roadmap représente la progression logique des TPs. Chaque TP s'appuie sur les acquis du précédent. Le TP2 (Jenkins) consomme les artefacts du TP1 (image Docker + dépôt Git) pour automatiser le pipeline. Cette accumulation progressive est caractéristique d'une vraie mise en place DevOps en entreprise.
 
 ---
 
@@ -1131,6 +1323,8 @@ Machine hôte
 └── Conteneur Jenkins
     └── monte /var/run/docker.sock  →  peut faire docker build, docker push…
 ```
+
+>  **Explication du schéma DooD :** Le daemon Docker est le processus central qui gère les conteneurs sur la machine hôte. En montant son socket dans le conteneur Jenkins, on lui permet d'envoyer des commandes au daemon hôte comme s'il était installé directement. Jenkins peut ainsi builder et pousser des images sans avoir son propre daemon Docker — d'où le nom "Docker-out-of-Docker" (par opposition à "Docker-in-Docker" qui ferait tourner un daemon complet à l'intérieur du conteneur).
 
 > **Risque de sécurité** : monter le socket Docker donne au conteneur Jenkins les mêmes droits que `root` sur l'hôte. En production, on préférera [Kaniko](https://github.com/GoogleContainerTools/kaniko) ou [Buildah](https://buildah.io/), qui ne nécessitent pas de daemon Docker.
 
@@ -1191,6 +1385,8 @@ git push
                                        :latest
 ```
 
+>  **Explication du schéma :** Chaque bloc représente un stage Jenkins. L'ordre est délibéré (principe Fail Fast) : Checkout d'abord (on a besoin du code), puis Lint (vérification syntaxique rapide avant de builder), puis Build & Test (opérations lourdes), puis Push uniquement si tout est vert et sur `main`. Le bloc `post { always }` s'exécute après tous les stages quelle que soit l'issue pour nettoyer les ressources. La flèche finale représente l'image publiée dans le registry GitHub avec deux tags : le SHA pour la traçabilité et `latest` pour la commodité.
+
 ---
 
 ## Prérequis
@@ -1217,6 +1413,9 @@ Jenkins sera installé dans un conteneur Docker qui a accès au daemon Docker de
 # Créer un volume pour persister les données Jenkins entre les redémarrages
 docker volume create jenkins-data
 ```
+
+>  **Explication :** `docker volume create` crée un volume Docker nommé `jenkins-data`. Un volume est un espace de stockage géré par Docker, indépendant du système de fichiers du conteneur. Les données écrites dans ce volume survivent aux arrêts, redémarrages et suppressions du conteneur Jenkins — permettant de conserver jobs, builds, plugins et credentials entre les sessions.
+
 ![image](https://hackmd.io/_uploads/ByPBhVbMMl.png)
 
 ```bash
@@ -1229,20 +1428,34 @@ docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   jenkins/jenkins:lts
 ```
-![image](https://hackmd.io/_uploads/ByV_3E-Mzx.png)
 
+>  **Explication de chaque option :**
+> - `-d` : mode détaché (arrière-plan).
+> - `--name jenkins` : nom lisible pour référencer le conteneur.
+> - `-p 8080:8080` : accès à l'interface web Jenkins (hôte:conteneur).
+> - `-p 50000:50000` : port de communication Jenkins master-agent (pour les agents Jenkins distants).
+> - `-v jenkins-data:/var/jenkins_home` : monte le volume persistant sur le répertoire home de Jenkins — **toutes les données Jenkins** (jobs, plugins, configurations) sont stockées ici.
+> - `-v /var/run/docker.sock:/var/run/docker.sock` : monte le socket Docker de l'hôte dans le conteneur, permettant au pipeline Jenkins d'exécuter `docker build` et `docker push` via le daemon hôte (technique DooD).
+> - `jenkins/jenkins:lts` : image officielle Jenkins en version LTS (Long Term Support), la plus stable.
+
+![image](https://hackmd.io/_uploads/ByV_3E-Mzx.png)
 
 ```bash
 # Vérifier que Jenkins démarre correctement
 docker logs -f jenkins
 # Attendez la ligne : Jenkins is fully up and running
 ```
+
+>  **Explication :** `docker logs -f` suit les logs en temps réel (`-f` = follow). Jenkins prend 30 à 60 secondes pour démarrer complètement (JVM + chargement des plugins). La ligne `Jenkins is fully up and running` confirme que le serveur est prêt à accepter des connexions sur le port 8080. `Ctrl+C` arrête le suivi sans arrêter Jenkins.
+
 ![image](https://hackmd.io/_uploads/HyyLaEbffl.png)
 
 ```bash
 # Vérifier que Jenkins peut accéder à Docker
 docker exec -u jenkins jenkins docker ps
 ```
+
+>  **Explication :** `docker exec -u jenkins jenkins docker ps` exécute la commande `docker ps` **à l'intérieur** du conteneur Jenkins, avec l'identité de l'utilisateur `jenkins`. Si la commande liste les conteneurs en cours d'exécution, cela confirme que Jenkins peut communiquer avec le daemon Docker de l'hôte via le socket monté.
 
 **Si erreur `executable file not found`** → installer Docker dans le conteneur :
 
@@ -1252,8 +1465,10 @@ docker exec -u root jenkins bash -c "
   apt-get install -y docker.io
 "
 ```
-![image](https://hackmd.io/_uploads/Sk6g0Ebfzl.png)
 
+>  **Explication :** L'image `jenkins/jenkins:lts` n'inclut pas le client Docker. Cette commande s'exécute en tant que `root` dans le conteneur Jenkins pour installer `docker.io` (le client Docker CLI). `apt-get update -q` met à jour la liste des paquets silencieusement (`-q` = quiet). `&&` enchaîne les commandes.
+
+![image](https://hackmd.io/_uploads/Sk6g0Ebfzl.png)
 
 **Si erreur `permission denied`** → corriger les permissions du socket :
 
@@ -1265,9 +1480,11 @@ docker exec -u root jenkins chmod 666 /var/run/docker.sock
 # Retester
 docker exec -u jenkins jenkins docker ps
 ```
+
+>  **Explication :** Par défaut, le socket `/var/run/docker.sock` appartient au groupe `docker` de l'hôte. L'utilisateur `jenkins` du conteneur n'appartient pas nécessairement à ce groupe. `chmod 666` donne les permissions de lecture et écriture à tous les utilisateurs sur le socket. Note : cette solution est simple mais réduit la sécurité — en production, on ajouterait l'utilisateur `jenkins` au groupe `docker`.
+
 ![image](https://hackmd.io/_uploads/H1fE04-ffe.png)
 ![image](https://hackmd.io/_uploads/ryb8R4-MGl.png)
-
 
 > **Rôle des montages :**
 > - `/var/run/docker.sock` : expose le socket Unix du daemon Docker de l'hôte à l'intérieur du conteneur Jenkins. Sans cela, Jenkins ne pourrait pas exécuter `docker build` et `docker push` depuis le pipeline.
@@ -1280,6 +1497,9 @@ docker exec -u jenkins jenkins docker ps
    ```bash
    docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
    ```
+
+>  **Explication :** Jenkins génère un mot de passe aléatoire lors du premier démarrage et le stocke dans `/var/jenkins_home/secrets/initialAdminPassword`. `docker exec jenkins cat ...` lit ce fichier depuis l'intérieur du conteneur et l'affiche dans le terminal. Ce mot de passe à usage unique est requis pour débloquer Jenkins lors de la première connexion.
+
 3. Collez ce mot de passe dans l'interface Jenkins.
 4. Choisissez **« Install suggested plugins »** et attendez la fin de l'installation.
 5. Créez votre compte administrateur (notez login / mot de passe).
@@ -1292,7 +1512,6 @@ docker exec -u jenkins jenkins docker ps
 ![image](https://hackmd.io/_uploads/By5pkB-Mze.png)
 ![image](https://hackmd.io/_uploads/ryOCkBZGzx.png)
 ![image](https://hackmd.io/_uploads/rJv1lr-fMx.png)
-
 
 ### 1.3 Installer les plugins nécessaires
 
@@ -1317,6 +1536,8 @@ echo "Pipeline:"; ls /var/jenkins_home/plugins/workflow-aggregator.jpi 2>/dev/nu
 echo "Blue Ocean:"; ls /var/jenkins_home/plugins/blueocean.jpi 2>/dev/null && echo OK;
 '
 ```
+
+>  **Explication :** Ce script vérifie que les fichiers `.jpi` (Jenkins Plugin Interface) des plugins installés existent dans le répertoire des plugins Jenkins. `2>/dev/null` redirige les erreurs (fichier non trouvé) vers `/dev/null` pour ne pas les afficher. `&& echo OK` s'affiche uniquement si le fichier existe — permettant de confirmer que chaque plugin est installé.
 
 ![image](https://hackmd.io/_uploads/Sy2NGHbMMe.png)
 
@@ -1350,6 +1571,14 @@ gh auth status
 # Afficher le token GitHub actuellement utilisé
 gh auth token
 ```
+
+>  **Explication des commandes `gh` :**
+> - `gh --version` : confirme que le CLI GitHub est installé.
+> - `gh auth login` : authentification interactive du CLI auprès de GitHub.
+> - `gh auth refresh -h github.com -s repo,read:packages,write:packages` : renouvelle le token d'authentification en ajoutant les scopes (permissions) nécessaires pour cloner des dépôts (`repo`), lire (`read:packages`) et écrire (`write:packages`) dans GitHub Container Registry.
+> - `gh auth status` : affiche les informations du compte connecté et les scopes accordés — permet de vérifier que toutes les permissions sont présentes.
+> - `gh auth token` : affiche le token d'accès personnel actuel. Ce token sera copié dans Jenkins comme credential.
+
 ![image](https://hackmd.io/_uploads/SkjdmS-fMg.png)
 ![image](https://hackmd.io/_uploads/H1Sg4rbMMe.png)
 ![image](https://hackmd.io/_uploads/HJkm4BbGMg.png)
@@ -1364,8 +1593,6 @@ gh auth token
 ![image](https://hackmd.io/_uploads/SktjEHWfGe.png)
 ![image](https://hackmd.io/_uploads/HJmM3SWGzg.png)
 ![image](https://hackmd.io/_uploads/B1MXhHbfzx.png)
-
-
 
 ---
 
@@ -1430,12 +1657,22 @@ pipeline {
 }
 EOF
 ```
+
+>  **Explication de la structure de base du Jenkinsfile :**
+> - `pipeline { }` : bloc racine obligatoire de tout Jenkinsfile déclaratif. Tout le pipeline est défini à l'intérieur.
+> - `agent any` : indique que le pipeline peut s'exécuter sur n'importe quel nœud Jenkins disponible (ici, le nœud master).
+> - `environment { }` : bloc de déclaration de variables d'environnement disponibles dans tous les stages.
+>   - `IMAGE_NAME` et `REGISTRY` : constantes définissant les coordonnées de l'image Docker.
+>   - `IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()` : **évaluation dynamique** — exécute une commande shell pour obtenir le SHA court du dernier commit Git et l'assigne à la variable. `.trim()` supprime le saut de ligne final retourné par la commande shell.
+> - `stages { }` : contiendra les 4 stages du pipeline (Checkout, Lint, Build&Test, Push).
+> - `post { }` : actions post-pipeline. `always` s'exécute systématiquement, `success` uniquement en cas de succès, `failure` uniquement en cas d'échec.
+> - `2>/dev/null` : redirige stderr vers /dev/null (silence les erreurs). `|| true` rend la commande toujours "réussie".
+
 ![image](https://hackmd.io/_uploads/ByABUH-zfg.png)
 
 - Modifier le pseudo
 ![image](https://hackmd.io/_uploads/HyqRIrWGMx.png)
 ![image](https://hackmd.io/_uploads/HyzlDS-zfg.png)
-
 
 **Comprendre `environment { }` et `IMAGE_TAG`**
 `IMAGE_TAG` utilise `sh(...)` pour exécuter une commande shell et capturer sa sortie. `git rev-parse --short HEAD` retourne les 7 premiers caractères du SHA du dernier commit.
@@ -1456,6 +1693,12 @@ stage('Checkout') {
 }
 ```
 
+>  **Explication du stage Checkout :**
+> - `checkout scm` : commande Jenkins qui clone le dépôt Git configuré dans le job (URL + credentials + branche). `scm` est une variable Groovy magique qui référence la configuration SCM du job.
+> - `${env.BRANCH_NAME}` : variable d'environnement Jenkins injectée automatiquement — contient le nom de la branche en cours de build (ex. `main`, `feat/my-feature`).
+> - `${env.GIT_COMMIT}` : SHA complet du commit en cours de build — utile pour la traçabilité dans les logs.
+> - `sh 'git log --oneline -5'` : affiche les 5 derniers commits dans les logs Jenkins, utile pour confirmer que le bon code a été récupéré.
+
 ### 2.3 Stage 2 - Lint
 
 Le **Lint** analyse le code Python avec `flake8` avant même de construire l'image Docker. C'est le principe **Fail Fast** : détecter les erreurs de syntaxe le plus tôt possible. `flake8` est lancé dans un conteneur Docker éphémère - aucune dépendance sur l'agent Jenkins.
@@ -1473,8 +1716,15 @@ stage('Lint') {
   }
 }
 ```
-![image](https://hackmd.io/_uploads/BJuAvSZMzg.png)
 
+>  **Explication du stage Lint :**
+> - `docker run --rm` : lance un conteneur qui sera **automatiquement supprimé** après son exécution (`--rm`). Évite l'accumulation de conteneurs orphelins.
+> - `--volumes-from jenkins` : monte tous les volumes du conteneur Jenkins dans ce conteneur temporaire. Cela donne accès au `$WORKSPACE` (répertoire de travail Jenkins contenant le code source cloné).
+> - `-w $WORKSPACE` : définit `$WORKSPACE` comme répertoire de travail. `$WORKSPACE` est une variable Jenkins pointant vers le répertoire où le code a été cloné.
+> - `python:3.12-slim` : image Python officielle légère — pas besoin de l'image SentimentAI complète pour faire du lint.
+> - `pip install flake8 -q && flake8 src/ --max-line-length=100` : installe flake8 silencieusement (`-q`) puis l'exécute sur le dossier `src/`. `--max-line-length=100` tolère des lignes jusqu'à 100 caractères (la limite par défaut est 79).
+
+![image](https://hackmd.io/_uploads/BJuAvSZMzg.png)
 
 > **Erreurs flake8 courantes et corrections**
 >
@@ -1496,6 +1746,10 @@ git add src/
 git commit -m "fix: correct flake8 style errors"
 git push origin main
 ```
+
+>  **Explication de la correction automatique :**
+> - `autopep8 --in-place --aggressive` : outil qui corrige **automatiquement** les erreurs de style PEP 8 directement dans les fichiers. `--in-place` modifie les fichiers existants. `--aggressive` applique des corrections plus poussées.
+> - Après correction, `flake8` vérifie qu'il ne reste plus d'erreurs. On commit et push pour que le prochain build Jenkins passe le stage Lint.
 
 ### 2.4 Stage 3 - Build & Test
 
@@ -1523,8 +1777,14 @@ stage('Build & Test') {
 }
 ```
 
-**Comprendre `--cov-fail-under=70`**
-Si la couverture de code par les tests est inférieure à 70 %, `pytest` retourne un code d'erreur non nul. Jenkins interprète ce code d'erreur : le stage échoue et le pipeline s'arrête immédiatement. C'est un **Quality Gate** minimal intégré directement dans le pipeline. Ce seuil sera renforcé avec SonarQube au TP3 (80 % minimum).
+>  **Explication du stage Build & Test :**
+> - `docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .` : construit l'image Docker taguée avec le SHA Git court. `${IMAGE_NAME}` et `${IMAGE_TAG}` sont interpolées depuis le bloc `environment`.
+> - `docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} pytest tests/ -v` : lance pytest **à l'intérieur de l'image fraîchement construite**. Garantit que les tests s'exécutent dans les mêmes conditions qu'en production.
+> - `--cov=src` : mesure la couverture de code du package `src/`.
+> - `--cov-report=xml:coverage.xml` : génère un rapport XML de couverture (sera consommé par SonarQube au TP3).
+> - `--cov-report=term-missing` : affiche dans les logs Jenkins les numéros de lignes non couvertes.
+> - `--cov-fail-under=70` : **Quality Gate** — fait échouer pytest (code de sortie non nul) si la couverture est inférieure à 70%, ce qui fait échouer le stage Jenkins.
+> - `post { failure { ... } }` : message d'erreur explicite affiché dans les logs si ce stage échoue, guidant le développeur vers la cause probable.
 
 ### 2.5 Stage 4 - Push (conditionnel)
 
@@ -1550,8 +1810,15 @@ stage('Push') {
   }
 }
 ```
-![image](https://hackmd.io/_uploads/HJAUOrWzMg.png)
 
+>  **Explication du stage Push :**
+> - `when { branch 'main' }` : condition Groovy qui exécute ce stage **uniquement si la branche en cours est `main`**. Sur toute autre branche (feature, bugfix, etc.), ce stage est sauté.
+> - `withCredentials([usernamePassword(...)])` : injecte le credential Jenkins `github-token` comme variables d'environnement `REGISTRY_USER` et `REGISTRY_PASS`. Les valeurs sont masquées dans les logs.
+> - `echo $REGISTRY_PASS | docker login ghcr.io -u $REGISTRY_USER --password-stdin` : authentification à GitHub Container Registry. `--password-stdin` lit le mot de passe depuis stdin (plus sécurisé que de le passer en argument de ligne de commande, visible dans `ps aux`).
+> - `docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}` : pousse l'image avec le tag SHA unique.
+> - `docker tag ... :latest` + `docker push ... :latest` : crée et pousse le tag `latest` qui pointe toujours vers le dernier build de `main`.
+
+![image](https://hackmd.io/_uploads/HJAUOrWzMg.png)
 
 **Sécurité - `withCredentials`**
 Ne jamais écrire un token ou mot de passe directement dans le Jenkinsfile : il serait stocké dans Git et visible par tous. `withCredentials` injecte les secrets comme variables d'environnement au moment de l'exécution. Les valeurs ne sont jamais visibles dans les logs Jenkins (remplacées par `****`). Le Jenkinsfile peut être commité dans Git sans risque.
@@ -1648,6 +1915,15 @@ pipeline {
   }
 }
 ```
+
+>  **Explication du Jenkinsfile complet :**
+> - **Stage `Checkout`** : clone le code et calcule `IMAGE_TAG` dynamiquement via un bloc `script { }` (nécessaire car `env.IMAGE_TAG` doit être défini après le checkout pour que `git rev-parse` fonctionne correctement).
+> - **Stage `Info`** : stage de diagnostic — affiche les 3 derniers commits et confirme que le workspace est accessible. Utile pour déboguer les problèmes de checkout.
+> - **Stage `Lint`** : utilise `-v $WORKSPACE:/app` pour monter le workspace Jenkins directement dans le conteneur (alternative à `--volumes-from jenkins`).
+> - **Stage `Build Docker`** : build l'image taguée avec le SHA. Utilise des guillemets simples triples `'''` pour le script shell multi-lignes.
+> - **Stage `Test`** : lance pytest dans l'image buildée. Séparé du build pour une meilleure lisibilité dans la vue des stages Jenkins.
+> - **Stage `Push to GHCR`** : pousse l'image vers GitHub Container Registry avec les deux tags (SHA et latest).
+
 ### 2.6 Commiter le Jenkinsfile
 
 ```bash
@@ -1655,6 +1931,8 @@ git add Jenkinsfile
 git commit -m "ci: add Jenkinsfile with 4 stages"
 git push origin main
 ```
+
+>  **Explication :** Le préfixe `ci:` (Conventional Commits) indique que ce commit concerne l'infrastructure de CI/CD plutôt que le code applicatif. Commiter le Jenkinsfile dans Git est l'essence même du **Pipeline as Code** : le pipeline est versionné, reviewable et rollbackable comme n'importe quel fichier source.
 
 ---
 
@@ -1734,6 +2012,9 @@ Pourquoi le stage Push utilise-t-il `when { branch 'main' }` ? Que se passerait-
 # Vérifier que le Jenkinsfile est bien poussé sur main
 git log --oneline origin/main | head -3
 ```
+
+>  **Explication :** `git log --oneline origin/main` affiche l'historique de la branche `main` sur le remote GitHub (pas la branche locale). `| head -3` limite l'affichage aux 3 commits les plus récents. Permet de confirmer que le Jenkinsfile est bien présent dans les derniers commits avant de déclencher le build.
+
 ![image](https://hackmd.io/_uploads/rycFpH-GGl.png)
 
 Dans Jenkins, cliquez sur le job `sentiment-ai-pipeline` puis **Build Now**. Surveillez le build en temps réel : cliquez sur le numéro du build → **Console Output**.
@@ -1765,6 +2046,12 @@ docker exec -u root jenkins chmod 666 /var/run/docker.sock
 # → Revérifier l'ID dans withCredentials(credentialsId: 'github-token')
 ```
 
+>  **Explication du guide de débogage :**
+> - **Erreur 1** : test de connectivité Docker depuis Jenkins. Si `docker ps` retourne une erreur, le socket n'est pas accessible — vérifier les options `-v /var/run/docker.sock:/var/run/docker.sock` dans la commande `docker run` de Jenkins.
+> - **Erreur 2** : solution rapide pour les erreurs de permissions sur le socket (à reappliquer si le conteneur Jenkins a été redémarré).
+> - **Erreur 3** : `ModuleNotFoundError: No module named 'src'` est l'erreur la plus courante. Elle signifie que le Dockerfile ne copie pas correctement `src/` ou que `__init__.py` est manquant.
+> - **Erreur 4** : `unauthorized` lors du push vers ghcr.io — vérifier que l'ID du credential dans Jenkins correspond exactement à celui référencé dans `withCredentials(credentialsId: ...)`.
+
 ---
 
 ###  Questions - Partie 3
@@ -1776,6 +2063,9 @@ Faites un screenshot du pipeline après le premier build réussi (vue stages ou 
 ```Bash
 git rev-parse --short HEAD
 ```
+
+> **Explication :** `git rev-parse --short HEAD` calcule le SHA court (7 caractères) du dernier commit local. Ce hash unique identifie précisément l'état du code au moment du build. Il est utilisé comme tag d'image Docker pour garantir la traçabilité entre le code source et l'image déployée en production.
+
 ![image](https://hackmd.io/_uploads/Hk7rbLbGGe.png)
 
 **Tag = 997da42**
@@ -1783,11 +2073,14 @@ git rev-parse --short HEAD
 **Question 3.2**
 Faites un second build en modifiant un fichier source (par exemple, ajouter un commentaire dans `src/main.py`). Le pipeline se relance-t-il automatiquement au bout de 5 minutes ? Vérifiez sur GitHub : l'image apparaît-elle dans les **Packages / Registry** ?
 
-- On ajoute un commentaire dan sle fichier 
+- On ajoute un commentaire dans le fichier 
 
 ```bash
 echo "# test pipeline second build" >> src/main.py
 ```
+
+>  **Explication :** `echo "..." >> fichier` ajoute (`>>`) le texte à la fin du fichier sans l'écraser (`>` écraserait). L'ajout d'un commentaire Python (ligne commençant par `#`) est une modification minimale qui ne change pas le comportement de l'application mais force Git à voir un changement — ce qui déclenchera le pipeline Jenkins.
+
 ![image](https://hackmd.io/_uploads/S1YAWIZzfx.png)
 
 - Commit + push
@@ -1799,10 +2092,10 @@ git push origin main
 ```
 ![image](https://hackmd.io/_uploads/HkWWm8ZzGx.png)
 
-Le pipeline se relance automatiquement après un push GitHub grâce au mécanisme de polling/trigger SCM Jenkins. Cependant, l’image Docker n’est pas encore visible dans GitHub Packages, car la phase de push vers le registry n’est pas exécutée dans le pipeline actuel. 
+Le pipeline se relance automatiquement après un push GitHub grâce au mécanisme de polling/trigger SCM Jenkins. Cependant, l'image Docker n'est pas encore visible dans GitHub Packages, car la phase de push vers le registry n'est pas exécutée dans le pipeline actuel. 
 ![image](https://hackmd.io/_uploads/r1tFHL-MMx.png)
 
-Après avoir apporter des modifications au niveau du fichier **Jenkinsfile**,  l'image est visible dans Github Packages et connecter avec le repo.
+Après avoir apporté des modifications au niveau du fichier **Jenkinsfile**,  l'image est visible dans Github Packages et connectée avec le repo.
 ![image](https://hackmd.io/_uploads/H1HZuL-zfe.png)
 
 ---
@@ -1846,6 +2139,15 @@ curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; data=j
 
 ```
 
+> **Explication de l'installation et lancement de ngrok :**
+> - `curl ... | sudo tee ...` : ajoute la clé GPG de ngrok au trousseau de confiance APT, permettant à `apt` de vérifier l'authenticité des paquets ngrok.
+> - `echo "deb ..." | sudo tee ...` : ajoute le dépôt officiel ngrok à la liste des sources APT.
+> - `sudo apt update && sudo apt install ngrok` : met à jour la liste des paquets et installe ngrok.
+> - `ngrok config add-authtoken <TOKEN>` : associe l'installation ngrok à votre compte. Sans token, les tunnels sont limités (connexions simultanées, durée, etc.).
+> - `nohup ngrok http 8080 ... &` : démarre ngrok en arrière-plan (`&`). `nohup` empêche ngrok de s'arrêter si le terminal est fermé. Les logs sont redirigés vers `ngrok.log`.
+> - `sleep 3` : attend 3 secondes que ngrok s'initialise et ouvre le tunnel.
+> - `curl -s http://localhost:4040/api/tunnels` : ngrok expose une API locale sur le port 4040. Cette commande récupère les informations du tunnel actif, notamment l'URL publique HTTPS qui rend Jenkins accessible depuis internet.
+
  **ngrok non disponible ?**
 Si ngrok n'est pas disponible, continuez avec le Poll SCM configuré à `H/5 * * * *`. Le pipeline se déclenchera automatiquement toutes les 5 minutes - suffisant pour ce TP. En entreprise, Jenkins est généralement hébergé sur un serveur avec une IP publique fixe.
 
@@ -1859,9 +2161,6 @@ Si ngrok n'est pas disponible, continuez avec le Poll SCM configuré à `H/5 * *
 
 ![image](https://hackmd.io/_uploads/HkDSQv-fMx.png)
 
-
-
-
 ### 4.3 Activer les triggers GitHub dans Jenkins
 
 1. Jenkins → votre job → **Configurer**
@@ -1869,11 +2168,9 @@ Si ngrok n'est pas disponible, continuez avec le Poll SCM configuré à `H/5 * *
 3. Sauvegardez.
 ![image](https://hackmd.io/_uploads/H1SwpLbMMx.png)
 
-
 ### Tester ngrok
 ![image](https://hackmd.io/_uploads/HyDaWv-zfx.png)
 ![image](https://hackmd.io/_uploads/rJ_xzDWffx.png)
-
 
 ### 4.4 Tester le déclenchement automatique
 
@@ -1893,11 +2190,18 @@ git checkout main
 git branch -d feat/test-webhook
 git push origin --delete feat/test-webhook
 ```
+
+> **Explication du test de webhook :**
+> - `git checkout -b feat/test-webhook` : crée et bascule vers une nouvelle branche de test.
+> - `echo '# test webhook' >> README.md` : ajoute une ligne au README — modification minime pour provoquer un push.
+> - `git push origin feat/test-webhook` : pousse la branche vers GitHub. GitHub envoie immédiatement une requête POST à l'URL ngrok configurée comme webhook. Jenkins reçoit cette notification et déclenche un nouveau build.
+> - Après vérification dans Jenkins (le build doit démarrer en quelques secondes), on nettoie : `git checkout main`, `git branch -d feat/test-webhook`, `git push origin --delete feat/test-webhook`.
+
 ![image](https://hackmd.io/_uploads/rJwdMwZMzl.png)
 
 ---
 
-###  Questions - Partie 4
+### Questions - Partie 4
 
 **Question 4.1**
 Le pipeline s'est-il déclenché automatiquement après le push ? Faites un screenshot du build automatique. Quelle est la différence entre Poll SCM et un webhook en termes de délai et de charge serveur ?
@@ -2022,6 +2326,7 @@ Seul `main` représente le code **validé, reviewé et mergé** - c'est le seul 
 5. Image disponible dans le registry : ghcr.io/pseudo/sentiment-ai:a3f8c12
 ```
 
+> **Explication du workflow :** Ce flux représente le chemin complet d'un push de code jusqu'à une image publiée. Étape 1 : le développeur pousse son code. Étape 2 : GitHub déclenche Jenkins via webhook (instantané) ou Poll SCM (délai jusqu'à 5 min). Étape 3 : Jenkins exécute chaque stage en séquence — si l'un échoue, le pipeline s'arrête et l'image n'est pas poussée. Étape 4 : le push ne s'effectue que si tous les stages sont verts ET qu'on est sur `main`. Étape 5 : l'image est disponible dans le registry, prête à être déployée en production.
 
 ### C - Traçabilité et Versionnement
 
@@ -2034,6 +2339,8 @@ Seul `main` représente le code **validé, reviewé et mergé** - c'est le seul 
 git checkout a3f8c12
 # Ou consulter directement sur GitHub
 ```
+
+> **Explication :** `git checkout a3f8c12` place le dépôt local dans l'état exact correspondant au commit `a3f8c12`. Tous les fichiers du projet seront exactement tels qu'ils étaient lors du build de cette image. C'est la valeur fondamentale du tagging par SHA : une correspondance **bijective** entre image Docker et état du code source, sans ambiguïté possible.
 
 C'est précisément l'intérêt de taguer avec le SHA plutôt qu'un numéro de version arbitraire : le tag **est** un pointeur direct vers le commit, sans ambiguïté possible.
 
@@ -2052,16 +2359,6 @@ En pratique :
 - On **déploie en production** avec le tag SHA - on sait exactement ce qu'on déploie et on peut rollback vers un SHA précis.
 - On utilise `:latest` pour récupérer rapidement la dernière version stable sans connaître le SHA, mais on ne s'en sert jamais pour un déploiement en production car sa cible change à chaque build.
 
----
-
-## Récapitulatif - À rendre
-
-- `Jenkinsfile` commité à la racine du repo `sentiment-ai`
--  Screenshot du pipeline Jenkins avec les **4 stages tous verts**
--  Screenshot de la **Console Output** du premier build réussi
--  Image Docker visible dans **GitHub Packages** avec le tag SHA Git
--  Screenshot du déclenchement automatique via webhook ou Poll SCM
--  Réponses aux questions **1.1, 1.2, 2.1, 2.2, 2.3, 3.1, 3.2, 4.1** et synthèse
 
 ---
 # Déploiement automatisé + Pipeline Jenkins
