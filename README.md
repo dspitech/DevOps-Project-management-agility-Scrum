@@ -5305,7 +5305,7 @@ Seuls 3 fichiers changent pour porter SentimentAI en production - le code applic
 
 ---
 
-# TP 5 — Monitoring & Observabilité
+# TP 5- Monitoring & Observabilité
 
 Exposer les métriques de SentimentAI et les visualiser dans Grafana  
 **Outils :** Prometheus · Grafana · FastAPI · Jenkins · Terraform · Docker
@@ -5464,7 +5464,7 @@ which uvicorn
 
 
 ```bash
-# Dans un autre terminal — vérifier /metrics
+# Dans un autre terminal- vérifier /metrics
 curl -s http://localhost:8000/metrics | grep sentiment
 ```
 ![image](https://hackmd.io/_uploads/HyEyUWXzGg.png)
@@ -5479,14 +5479,14 @@ curl -s -X POST http://localhost:8000/predict \
 ![image](https://hackmd.io/_uploads/B1GQLb7Mfx.png)
 
 ```bash
-# Re-vérifier — le counter doit avoir augmenté
+# Re-vérifier- le counter doit avoir augmenté
 curl -s http://localhost:8000/metrics | grep sentiment_predictions_total
 ```
 ![image](https://hackmd.io/_uploads/B1iBIbmMGg.png)
 
 ---
 
-### Questions — Section 1
+### Questions- Section 1
 
 #### Question 1.1
 Faites un screenshot de `curl /metrics` montrant vos métriques `sentiment_predictions_total` et `sentiment_confidence_score`.
@@ -5517,8 +5517,8 @@ Quelle est la différence entre un **Counter** et un **Gauge** ? Donnez un exemp
 
 | Type | Comportement | Exemple dans le code |
 |------|-------------|----------------------|
-| **Counter** | Valeur **monotone croissante** — elle ne peut qu'augmenter ou être remise à zéro au redémarrage du processus | `predictions_total` : compte le nombre total de prédictions effectuées depuis le démarrage de l'app |
-| **Gauge** | Valeur **arbitraire** — elle peut monter ou descendre librement | `confidence_gauge` : reflète le score de confiance de la *dernière* prédiction, qui varie entre 0 et 1 |
+| **Counter** | Valeur **monotone croissante**- elle ne peut qu'augmenter ou être remise à zéro au redémarrage du processus | `predictions_total` : compte le nombre total de prédictions effectuées depuis le démarrage de l'app |
+| **Gauge** | Valeur **arbitraire**- elle peut monter ou descendre librement | `confidence_gauge` : reflète le score de confiance de la *dernière* prédiction, qui varie entre 0 et 1 |
 
 En résumé : un Counter mesure un **cumul** (nombre d'événements), un Gauge mesure un **état instantané** (une valeur courante).
 
@@ -5701,7 +5701,7 @@ terraform apply -auto-approve-auto-approve
 **Symptôme si l'image n'est pas à jour :** Prometheus affiche `sentiment-ai DOWN` avec l'erreur `"server returned HTTP status 404 Not Found"` sur `http://sentiment-staging:8000/metrics`.
 
 ```bash
-# Via l'API Prometheus — sentiment-ai doit être UP
+# Via l'API Prometheus- sentiment-ai doit être UP
 curl -s http://localhost:9090/api/v1/targets | \
   python3 -m json.tool | grep health
 # Résultat attendu : "health": "up"
@@ -5717,7 +5717,7 @@ curl -s http://localhost:9090/api/v1/targets | \
 
 ---
 
-### Questions — Section 2
+### Questions- Section 2
 
 #### Question 2.1
 > Faites un screenshot de `http://localhost:9090/targets` montrant `sentiment-ai` avec le statut **UP**.
@@ -5753,7 +5753,7 @@ Solution : envoyer quelques requêtes `POST /predict`, attendre ~30 s, puis rela
 
 **Réponse :**
 
-Prometheus tourne dans un **conteneur Docker** distinct. Dans ce contexte, `localhost` fait référence au réseau interne du conteneur Prometheus lui-même — pas à la machine hôte ni aux autres conteneurs.
+Prometheus tourne dans un **conteneur Docker** distinct. Dans ce contexte, `localhost` fait référence au réseau interne du conteneur Prometheus lui-même- pas à la machine hôte ni aux autres conteneurs.
 
 `sentiment-staging` est le **nom DNS Docker** attribué au conteneur SentimentAI sur le réseau `cicd-network`. Docker fournit une résolution DNS interne entre conteneurs d'un même réseau, ce qui permet à Prometheus d'atteindre `sentiment-staging:8000` sans exposer le port sur la machine hôte.
 
@@ -5830,7 +5830,7 @@ for i in $(seq 1 50); do curl -s -X POST http://localhost:8000/predict -H "Conte
 
 ---
 
-### Questions — Section 3
+### Questions- Section 3
 
 #### Question 3.1
 Faites un screenshot de votre dashboard Grafana avec les 4 panels affichant des données.
@@ -5853,9 +5853,9 @@ histogram_quantile(0.99, rate(sentiment_prediction_duration_seconds_bucket[5m]))
 
 **Pourquoi `histogram_quantile()` et pas `avg()` ?**
 
-`avg()` calcule la **moyenne** des durées, qui peut être très trompeuse : si 99 % des requêtes répondent en 50 ms mais 1 % met 10 s, la moyenne sera peut-être 150 ms — une valeur qui masque complètement le problème.
+`avg()` calcule la **moyenne** des durées, qui peut être très trompeuse : si 99 % des requêtes répondent en 50 ms mais 1 % met 10 s, la moyenne sera peut-être 150 ms- une valeur qui masque complètement le problème.
 
-`histogram_quantile(0.99, ...)` calcule le **percentile 99** : la valeur en dessous de laquelle se trouvent 99 % des observations. C'est la métrique standard en SRE/DevOps car elle révèle l'expérience des **utilisateurs les plus lents** — ceux qui souffrent vraiment d'un problème de latence.
+`histogram_quantile(0.99, ...)` calcule le **percentile 99** : la valeur en dessous de laquelle se trouvent 99 % des observations. C'est la métrique standard en SRE/DevOps car elle révèle l'expérience des **utilisateurs les plus lents**- ceux qui souffrent vraiment d'un problème de latence.
 
 En résumé :
 - `avg()` → performance *typique* (peut cacher les outliers)
@@ -5863,7 +5863,7 @@ En résumé :
 
 ---
 
-## 4. Intégration Jenkins — Pipeline 11 Stages
+## 4. Intégration Jenkins- Pipeline 11 Stages
 
 ### 4.1 Provisionner le monitoring avec Terraform
 
@@ -6138,7 +6138,7 @@ git push origin main
 
 ---
 
-### Questions — Section 4
+### Questions- Section 4
 
 #### Question 4.1
 Faites un screenshot du pipeline Jenkins avec les 11 stages tous verts.
