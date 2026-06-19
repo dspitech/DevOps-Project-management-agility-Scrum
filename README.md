@@ -2470,6 +2470,9 @@ git clone https://github.com/dspitech/DevOps-VM-Ubuntu-Terraform-Azure.git
 cd DevOps-VM-Ubuntu-Terraform-Azure
 ```
 
+![image](https://hackmd.io/_uploads/SkxcmtzzGl.png)
+
+
 - Lancer Visual Studio Code depuis Cloud Shell
 ```
 code .
@@ -2480,7 +2483,7 @@ code .
 ```yaml
 #cloud-config
 # ============================================================
-# Cloud-init- Provisionnement automatique au premier démarrage
+# Cloud-init — Provisionnement automatique au premier démarrage
 # Installe : Docker CE + Docker Compose + Git + Make + GitHub CLI + ngrok + Terraform
 # Tous les services sont configurés avec les bonnes permissions
 # Installation Docker CE + Compose	
@@ -2835,6 +2838,8 @@ final_message: "OpenLab VM prête. Docker, Git, Make, GitHub CLI, Terraform, ngr
 - Ligne à modifier : su - labadmin -c "ngrok config add-authtoken METTRE_VOTRE_TOKEN_NGROK_ICI"
 - git clone https://github.com/dev/sentiment-ai.git : mettez votre vrai URL du projet dans Github.
 
+![image](https://hackmd.io/_uploads/SkP6Qtzzzg.png)
+
 
 ### Étape 2 - Créer le backend Terraform (Storage Account)
 
@@ -2844,6 +2849,7 @@ Le state Terraform est stocké dans Azure pour persister entre les sessions Clou
 chmod +x ./setup-backend.sh
 ./setup-backend.sh
 ```
+![image](https://hackmd.io/_uploads/ryQl4KMfGe.png)
 
 Le script affiche le nom du Storage Account généré (ex. `openlabtfstate42871`). Il met à jour `backend.tf` automatiquement.
 
@@ -2852,6 +2858,7 @@ Si le Storage Account existe déjà, vérifiez son nom et mettez à jour `backen
 ```powershell
 az storage account list --resource-group OpenLab-TFState-RG --query "[].name" -o tsv
 ```
+![image](https://hackmd.io/_uploads/Sy0XEYfGze.png)
 
 Pour déployer **sans backend distant**, supprimez simplement `backend.tf` avant de lancer `terraform init`. Le state sera créé localement dans `terraform.tfstate`.
 
@@ -2860,6 +2867,10 @@ Pour déployer **sans backend distant**, supprimez simplement `backend.tf` avant
 ```powershell
 terraform init && terraform fmt && terraform validate && terraform plan && terraform apply -auto-approve
 ```
+![image](https://hackmd.io/_uploads/BJaHVYMGfg.png)
+![image](https://hackmd.io/_uploads/rJUhEKMzfl.png)
+![image](https://hackmd.io/_uploads/HJQ0VKGfzl.png)
+
 
 Terraform crée automatiquement :
 - Une paire de clés RSA 4096 bits (provider `tls`)
@@ -2871,6 +2882,8 @@ Terraform crée automatiquement :
 ```powershell
 download ./openlab_rsa
 ```
+![image](https://hackmd.io/_uploads/BkZxStfzMx.png)
+
 
 ### Étape 5 - Se connecter à la VM
 
@@ -2884,6 +2897,7 @@ Récupérez l'IP publique à tout moment :
 ```powershell
 terraform output public_ip_address
 ```
+![image](https://hackmd.io/_uploads/S18XrYzfGl.png)
 
 ---
 
@@ -2904,6 +2918,10 @@ cat /var/log/openlab-init.log
 # Lire le fichier d'informations généré automatiquement
 cat /home/labadmin/INFO.txt
 ```
+![image](https://hackmd.io/_uploads/r1h4HKzzfl.png)
+![image](https://hackmd.io/_uploads/S1MoHYfzMe.png)
+![image](https://hackmd.io/_uploads/S1P3BYMMfe.png)
+
 
 `INFO.txt` contient l'URL Jenkins (ngrok), le mot de passe initial et toutes les commandes utiles.
 
@@ -2916,6 +2934,7 @@ docker ps
 docker logs jenkins --tail 20
 # Vérifier la ligne : "Jenkins is fully up and running"
 ```
+![image](https://hackmd.io/_uploads/BJQyLYfGMl.png)
 
 ---
 
@@ -2924,10 +2943,19 @@ docker logs jenkins --tail 20
 ```bash
 docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
+![image](https://hackmd.io/_uploads/BylZIFMzze.png)
 
-Ouvrez Jenkins dans votre navigateur via l'URL ngrok affichée dans `INFO.txt` (format `https://xxxx.ngrok-free.app`).
+
+Ouvrez Jenkins dans votre navigateur : 
 
 Collez le mot de passe récupéré, puis choisissez **Install suggested plugins**.
+![image](https://hackmd.io/_uploads/rJcVIFMffl.png)
+![image](https://hackmd.io/_uploads/Sy_L8YfGzg.png)
+![image](https://hackmd.io/_uploads/rJVwIKGzfx.png)
+![image](https://hackmd.io/_uploads/ByKRIFffzx.png)
+![image](https://hackmd.io/_uploads/BJaJDYGMGg.png)
+![image](https://hackmd.io/_uploads/r1c7PKMfzx.png)
+
 
 ---
 
@@ -2938,11 +2966,13 @@ Dans Jenkins : **Administrer Jenkins → Plugins → Available plugins**
 Rechercher et installer :
 
 - `Docker Pipeline`
-- `Git`
+- `Docker Pipeline`
 - `Pipeline`
 - `Blue Ocean` (optionnel)
 
 Redémarrer Jenkins si demandé.
+![image](https://hackmd.io/_uploads/ryDSDYGzzg.png)
+![image](https://hackmd.io/_uploads/HJeRwFMfzg.png)
 
 ---
 
@@ -2967,6 +2997,13 @@ Jenkins → **Administrer Jenkins → Credentials → System → Global credenti
 | Description | `GitHub token for sentiment-ai` |
 
 Cliquer **Create**.
+![image](https://hackmd.io/_uploads/Sy9V5FGzGe.png)
+![image](https://hackmd.io/_uploads/SyurcKMfGg.png)
+![image](https://hackmd.io/_uploads/SkcI5Yzzzx.png)
+![image](https://hackmd.io/_uploads/HkkocKffGg.png)
+![image](https://hackmd.io/_uploads/S1f3qFGMzx.png)
+
+
 
 ---
 
@@ -2988,6 +3025,15 @@ Configurer :
 | Pipeline | Script Path | `Jenkinsfile` |
 
 Cliquer **Save**.
+![image](https://hackmd.io/_uploads/HkPpqtMGzx.png)
+![image](https://hackmd.io/_uploads/B1ZkoYGfMe.png)
+![image](https://hackmd.io/_uploads/H1pGjKfMGx.png)
+![image](https://hackmd.io/_uploads/SyuVjKfGMe.png)
+![image](https://hackmd.io/_uploads/rJ2UiFzGfl.png)
+![image](https://hackmd.io/_uploads/SymOjFMzGx.png)
+![image](https://hackmd.io/_uploads/SJXtjtfGGx.png)
+
+
 
 ---
 
@@ -3011,6 +3057,7 @@ NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c \
    print(data['tunnels'][0]['public_url'] if data.get('tunnels') else 'Non disponible')")
 echo "URL Jenkins : $NGROK_URL"
 ```
+![image](https://hackmd.io/_uploads/BJXy3FMMGx.png)
 
 Si ngrok n'est pas disponible, configurez **Poll SCM** dans le job Jenkins à la place du webhook : Schedule `H/5 * * * *` (déclenchement toutes les 5 minutes).
 
@@ -3029,6 +3076,8 @@ Si ngrok n'est pas disponible, configurez **Poll SCM** dans le job Jenkins à la
 | Active |  coché |
 
 Cliquer **Add webhook**.
+![image](https://hackmd.io/_uploads/r1PfnYfGze.png)
+![image](https://hackmd.io/_uploads/H1rQhFMMGl.png)
 
 ---
 
@@ -3064,6 +3113,7 @@ git push origin main
 ```
 
 Jenkins démarre un nouveau build automatiquement dans les secondes qui suivent le push (via webhook) ou dans les 5 minutes suivantes (via Poll SCM).
+![image](https://hackmd.io/_uploads/S1NTatMMMe.png)
 
 ---
 
@@ -3130,7 +3180,6 @@ Le Resource Group du backend (`OpenLab-TFState-RG`) et le Storage Account ne son
 | Push GHCR échoue | Token GitHub expiré ou permissions insuffisantes | Régénérer un token avec `repo`, `read:packages`, `write:packages` |
 | Backend Terraform 404 | Nom Storage Account incorrect dans `backend.tf` | `az storage account list --resource-group OpenLab-TFState-RG --query "[].name" -o tsv` |
 | Timeout SSH après `terraform apply` | VM pas encore démarrée | Attendre 2 minutes avant de se connecter |
-
 ---
 
 ## Prérequis pour le TP3
