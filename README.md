@@ -3143,3 +3143,1454 @@ Le TP3 ajoutera **SonarQube** et **Trivy** au pipeline Jenkins pour l'analyse de
 
 ---
 
+# TP 3 - Qualité & Sécurité : SonarQube + Trivy
+
+Objectif : intégrer l'analyse de code statique (SonarQube) et le scan de vulnérabilités (Trivy) dans le pipeline CI/CD de SentimentAI.
+
+---
+
+## Vue d'ensemble
+
+```
+TP 1              TP 2                  TP 3                TP 4         TP 5
+Git + Docker   Jenkins pipeline     SonarQube + Trivy   Terraform    Monitoring
++ Compose      build + test + push  Qualité & Sécurité  IaC Docker   Prometheus
+SentimentAI v0.1                                                      + Grafana
+```
+
+Le pipeline du TP2 buildait et testait SentimentAI automatiquement. Ce TP ajoute deux outils complémentaires :
+
+| Outil | Rôle | Ce qu'il inspecte |
+|---|---|---|
+| **SonarQube** | Analyse statique du code source | Bugs, vulnérabilités, code smells, couverture, duplication |
+| **Trivy** | Scan de vulnérabilités CVE | Paquets OS + dépendances Python de l'image Docker |
+
+> Si l'un ou l'autre détecte un problème au-delà du seuil configuré, le pipeline s'arrête et l'image n'est **jamais poussée** vers le registry.
+
+---
+
+## Prérequis
+
+- Docker installé et en cours d'exécution
+- Jenkins opérationnel (depuis le TP2) sur le réseau `cicd-network`
+- Pipeline TP2 fonctionnel (build + test + push vers GHCR)
+- Accès à `http://localhost:8080` (Jenkins) et `http://localhost:9000` (SonarQube)
+
+---
+
+## Concepts clés
+
+### SonarQube - 5 dimensions analysées
+
+| Dimension | Définition |
+|---|---|
+| **Bugs** | Erreurs certaines dans le code - comportement anormal garanti à l'exécution |
+| **Vulnérabilités** | Failles de sécurité exploitables (injections, secrets en dur, etc.) |
+| **Code Smells** | Code qui fonctionne mais difficile à maintenir, lire ou faire évoluer |
+| **Couverture** | Pourcentage de lignes de code exécutées par les tests automatisés |
+| **Duplication** | Blocs de code identiques ou très similaires répétés à plusieurs endroits |
+
+### Quality Gate
+
+Un **Quality Gate** est un ensemble de seuils configurés dans SonarQube. Si l'un est dépassé, l'analyse est marquée comme **échec** et Jenkins arrête le pipeline avant le push. C'est la porte de qualité qui garantit que seul du code sain part en production.
+
+### CVE - Common Vulnerabilities and Exposures
+
+Une **CVE** est un identifiant unique (ex : `CVE-2023-1234`) attribué à une faille de sécurité connue dans un logiciel. Trivy compare les paquets de votre image Docker contre une base de données de CVE pour détecter celles qui sont présentes.
+
+### Dette technique
+
+La **dette technique** représente le coût futur engendré par des choix de développement rapides mais sous-optimaux. Les Code Smells SonarQube sont une mesure directe de cette dette : chaque smell non corrigé alourdit la maintenance et ralentit les futures évolutions.
+
+---
+
+## 1 - Installer et configurer SonarQube
+
+### 1.1 Lancer SonarQube via Docker
+
+SonarQube utilise Elasticsearch en interne, qui nécessite une limite mémoire système spécifique.
+
+```bash
+# Linux uniquement - ajuster la limite mémoire système
+sudo sysctl -w vm.max_map_count=262144
+```
+![image](https://hackmd.io/_uploads/Hk-tAFffMg.png)
+
+- Vérifier quel réseau utilise Jenkins
+
+```
+docker inspect jenkins --format '{{json .NetworkSettings.Networks}}'
+```
+![image](https://hackmd.io/_uploads/S1qo15zzGe.png)
+
+Résultat : Jenkins = réseau bridge
+
+On remarque le réseau : `cicd-network` n'existe pas.
+
+- Création du réseau : `cicd-network`
+
+```
+docker network create cicd-network
+docker network connect cicd-network jenkins
+```
+![image](https://hackmd.io/_uploads/SJinl9MGzg.png)
+
+
+- On relance le conteneur SonarQube : 
+
+```bash
+# Lancer SonarQube (Linux)
+docker run -d \
+  --name sonarqube \
+  --network cicd-network \
+  -p 9000:9000 \
+  sonarqube:lts-community
+```
+![image](https://hackmd.io/_uploads/H1MgycfzMg.png)
+![image](https://hackmd.io/_uploads/Hk7M-qzzMl.png)
+
+
+```bash
+# Attendre que SonarQube soit prêt (~60 secondes)
+docker logs -f sonarqube | grep 'SonarQube is operational'
+```
+![image](https://hackmd.io/_uploads/BkzLbqGMGg.png)
+
+
+**Pourquoi `--network cicd-network` ?**  
+Jenkins envoie les résultats d'analyse à SonarQube via l'URL `http://sonarqube:9000` - le nom DNS interne Docker du conteneur. Ce nom n'est résolu que si les deux conteneurs partagent le même réseau Docker. Sans réseau commun, Jenkins ne peut pas contacter SonarQube et l'analyse échoue.
+
+On vérifie si les deux sont dans le même réseau : 
+```bash
+# Jenkins
+docker inspect jenkins --format '{{json .NetworkSettings.Networks}}'
+
+# SonarQube
+docker inspect sonarqube --format '{{json .NetworkSettings.Networks}}'
+```
+![image](https://hackmd.io/_uploads/B1UUfqzGzl.png)
+
+
+### 1.2 Première connexion et configuration
+
+1. Ouvrez `http://localhost:9000`
+2. Login par défaut : `admin` / `admin` → modifiez le mot de passe
+3. Créez un projet manuellement :
+   - **Project display name** : `SentimentAI`
+   - **Project key** : `sentiment-ai` *(noter cette valeur, elle apparaîtra dans le Jenkinsfile)*
+   - **Main branch** : `main`
+4. Méthode d'analyse : **With Jenkins**
+5. Générez un token d'analyse :
+   - `My Account` → `Security` → `Generate Token`
+   - Name : `jenkins-token` | Type : `Global Analysis Token`
+   - **Copiez le token immédiatement** (il n'est affiché qu'une seule fois)
+
+![image](https://hackmd.io/_uploads/S1VFG5ffzl.png)
+![image](https://hackmd.io/_uploads/S18cz5fMzg.png)
+![image](https://hackmd.io/_uploads/HyP3GcMGGl.png)
+![image](https://hackmd.io/_uploads/BkFafczMMg.png)
+![image](https://hackmd.io/_uploads/Skxym5zffl.png)
+![image](https://hackmd.io/_uploads/r1zmm9zMzl.png)
+![image](https://hackmd.io/_uploads/rJ2V7qzGMl.png)
+![image](https://hackmd.io/_uploads/ry3L7czGGe.png)
+![image](https://hackmd.io/_uploads/HycHVcMMMe.png)
+![image](https://hackmd.io/_uploads/SJTPV9zMMl.png)
+![image](https://hackmd.io/_uploads/r1eq4czGfx.png)
+
+
+### 1.3 Configurer SonarQube dans Jenkins
+
+**Étape 1 - Installer le plugin SonarQube Scanner**
+
+```
+Jenkins → Plugins → Available → SonarQube Scanner → Install
+```
+![image](https://hackmd.io/_uploads/rJvnV5Gfzg.png)
+![image](https://hackmd.io/_uploads/Hyg0VqzGfx.png)
+![image](https://hackmd.io/_uploads/ryllS9zMGg.png)
+
+
+**Étape 2 - Enregistrer le token**
+
+```
+Jenkins → Administrer Jenkins → Credentials → System → Global credentials
+→ Add Credentials → Kind : Secret text
+→ Secret : <votre token SonarQube>
+→ ID : sonar-token
+```
+![image](https://hackmd.io/_uploads/HJuWr5MMGx.png)
+![image](https://hackmd.io/_uploads/rkTSrcfMfg.png)
+![image](https://hackmd.io/_uploads/SJnoBqzzfl.png)
+![image](https://hackmd.io/_uploads/SJQ6rcMfMg.png)
+
+
+**Étape 3 - Configurer le serveur SonarQube**
+
+```
+Jenkins → Administrer Jenkins → System → SonarQube servers
+→ Add SonarQube : Name = sonarqube | URL = http://sonarqube:9000
+→ Server authentication token : sonar-token
+```
+![image](https://hackmd.io/_uploads/BkPr8qMGfx.png)
+![image](https://hackmd.io/_uploads/SkbTUqzzzl.png)
+
+**Étape 4 - Configurer le webhook SonarQube → Jenkins**
+
+```
+SonarQube → Administration → Configuration → Webhooks
+→ Add webhook : Name = jenkins
+→ URL = http://jenkins:8080/sonarqube-webhook/
+```
+![image](https://hackmd.io/_uploads/B1tU_cMffl.png)
+![image](https://hackmd.io/_uploads/rJIvd9zffl.png)
+![image](https://hackmd.io/_uploads/BkRCd9fGzg.png)
+![image](https://hackmd.io/_uploads/rkiJF5MMfe.png)
+
+Le **slash final** dans l'URL du webhook est obligatoire. Sans lui, Jenkins ne recevra pas la notification du Quality Gate.
+
+---
+
+###  Réponse 1.1 - Page d'accueil SonarQube
+
+> **Note :** Un screenshot réel doit être joint au rendu. La page `http://localhost:9000` affiche après connexion le projet **SentimentAI** dans le dashboard avec ses métriques initiales (0 bugs, 0 code smells, coverage non encore calculée). Le projet apparaît avec la clé `sentiment-ai` et la branche `main`.
+![image](https://hackmd.io/_uploads/By5MKqfzfx.png)
+
+---
+
+###  Réponse 1.2 - Pourquoi `--network cicd-network` ?
+
+Docker isole les conteneurs dans des réseaux virtuels distincts. Par défaut, deux conteneurs lancés sans réseau commun ne peuvent pas se joindre par nom - ils ne partagent pas de DNS interne.
+
+En plaçant `sonarqube` et `jenkins` sur `cicd-network` :
+
+- Jenkins peut résoudre `http://sonarqube:9000` via le DNS interne Docker (le nom du conteneur devient un nom d'hôte).
+- Le scanner SonarQube lancé depuis Jenkins peut envoyer les résultats d'analyse au serveur SonarQube.
+- Le webhook SonarQube → Jenkins (`http://jenkins:8080/sonarqube-webhook/`) fonctionne également par ce même mécanisme.
+
+**Sans ce paramètre**, Jenkins tenterait de résoudre `sonarqube` et obtiendrait une `UnknownHostException: sonarqube`. Le stage **Quality Gate** échouerait immédiatement car `waitForQualityGate` ne peut pas joindre le serveur pour récupérer le résultat.
+
+---
+
+### Réponse 1.3 - Bug vs Code Smell en Python
+
+| | Bug | Code Smell |
+|---|---|---|
+| **Définition** | Erreur qui **va** provoquer un comportement incorrect à l'exécution | Code qui **fonctionne** mais est difficile à comprendre, maintenir ou faire évoluer |
+| **Risque** | Crash, résultat faux, exception non gérée | Pas de dysfonctionnement immédiat, mais accumulation de dette technique |
+| **Action SonarQube** | Bloque le Quality Gate si sévérité ≥ seuil configuré | Comptabilisé en "dette technique" (temps estimé de correction) |
+
+SonarQube signale : *"A 'KeyError' exception might be thrown here"*. Le code plantera en production si `analyze()` retourne un dict sans la clé `score`.
+
+**Exemple de Code Smell en Python :**
+
+```python
+def p(t, l, s, m):          # Code Smell : noms de paramètres non explicites
+    for i in range(len(l)):  # Code Smell : utiliser enumerate() à la place
+        if l[i] == t:
+            s = s + l[i]     # Code Smell : utiliser s += l[i]
+    return s
+```
+Le code s'exécute correctement, mais un développeur qui reprend ce code ne comprend pas ce que `p`, `t`, `l`, `s`, `m` représentent - maintenance et debugging difficiles.
+
+---
+
+## 2 - Intégrer SonarQube dans le Jenkinsfile
+
+### 2.1 Modifier le stage Build & Test pour générer `coverage.xml`
+
+SonarQube lit le rapport de couverture produit par `pytest`. Il faut modifier le stage Build & Test pour nommer le conteneur de test et copier `coverage.xml` vers le workspace Jenkins.
+
+```groovy
+stage('Build & Test') {
+  steps {
+    sh '''
+      docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
+      # Supprimer un éventuel conteneur test-runner résiduel
+      docker rm -f test-runner 2>/dev/null || true
+
+      # set +e : désactive l'arrêt automatique sur erreur
+      # Permet de copier coverage.xml même si pytest échoue
+      set +e
+      docker run \
+        -e CI=true \
+        --name test-runner \
+        ${IMAGE_NAME}:${IMAGE_TAG} \
+        pytest tests/ -v \
+          --cov=src \
+          --cov-report=xml:/tmp/coverage.xml \
+          --cov-report=term-missing \
+          --cov-fail-under=70
+      TEST_EXIT_CODE=$?
+      set -e  # Réactive l'arrêt automatique sur erreur
+
+      # Copier coverage.xml depuis le conteneur vers le workspace
+      docker cp test-runner:/tmp/coverage.xml ./coverage.xml 2>/dev/null || true
+      docker rm -f test-runner 2>/dev/null || true
+
+      # Retourner le code de sortie original des tests
+      exit $TEST_EXIT_CODE
+    '''
+  }
+  post {
+    failure { echo 'Tests échoués ou coverage insuffisant (< 70%)' }
+  }
+}
+```
+
+Fichier Jenkinsfile : 
+
+```bash
+cat > Jenkinsfile << 'EOF'
+pipeline {
+  agent any
+
+  environment {
+    IMAGE_NAME = 'sentiment-ai'
+    REGISTRY   = 'ghcr.io/dspitech'
+    REGISTRY_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          env.IMAGE_TAG = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        }
+      }
+    }
+
+    stage('Info') {
+      steps {
+        sh 'git log --oneline -3'
+        sh 'echo "Workspace OK"'
+      }
+    }
+
+    stage('Lint') {
+      steps {
+        sh '''
+          docker run --rm \
+            -v $WORKSPACE:/app \
+            -w /app \
+            python:3.12-slim \
+            sh -c "pip install flake8 -q && flake8 ."
+        '''
+      }
+    }
+
+    stage('Build & Test') {
+      steps {
+        sh '''
+          IMAGE_NAME=sentiment-ai
+
+          docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
+          docker rm -f test-runner 2>/dev/null || true
+
+          set +e
+
+          docker run \
+            -e CI=true \
+            --name test-runner \
+            ${IMAGE_NAME}:${IMAGE_TAG} \
+            pytest tests/ -v \
+              --cov=src \
+              --cov-report=xml:/tmp/coverage.xml \
+              --cov-report=term-missing \
+              --cov-fail-under=70
+
+          TEST_EXIT_CODE=$?
+          set -e
+
+          docker cp test-runner:/tmp/coverage.xml ./coverage.xml 2>/dev/null || true
+
+          docker rm -f test-runner 2>/dev/null || true
+
+          exit $TEST_EXIT_CODE
+        '''
+      }
+
+      post {
+        failure {
+          echo 'Tests échoués ou coverage < 70%'
+        }
+      }
+    }
+
+    stage('Push to GHCR') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'github-token',
+          usernameVariable: 'GITHUB_USER',
+          passwordVariable: 'GITHUB_TOKEN'
+        )]) {
+          sh '''
+            echo $GITHUB_TOKEN | docker login ghcr.io -u $GITHUB_USER --password-stdin
+
+            docker tag sentiment-ai:${IMAGE_TAG} ${REGISTRY_IMAGE}:${IMAGE_TAG}
+            docker tag sentiment-ai:${IMAGE_TAG} ${REGISTRY_IMAGE}:latest
+
+            docker push ${REGISTRY_IMAGE}:${IMAGE_TAG}
+            docker push ${REGISTRY_IMAGE}:latest
+          '''
+        }
+      }
+    }
+
+  }
+
+  post {
+    success {
+      echo "Pipeline OK - Image pushed: ${REGISTRY_IMAGE}:${IMAGE_TAG}"
+    }
+    failure {
+      echo "Pipeline FAILED"
+    }
+  }
+}
+EOF
+```
+
+![image](https://hackmd.io/_uploads/B1cQjczfGx.png)
+
+- Faire un test
+
+```bash
+git add Jenkinsfile
+git commit -m "Add coverage + build test"
+git push origin main
+```
+![image](https://hackmd.io/_uploads/B15dscGMfg.png)
+
+- Trouver le fichier coverage.xml
+
+```bash
+docker exec -it jenkins ls -l /var/jenkins_home/workspace/sentiment-ai-pipeline
+```
+![image](https://hackmd.io/_uploads/BJzcncfMGx.png)
+
+- Afficher le contenu coverage.xml
+
+```bash
+docker exec -it jenkins cat /var/jenkins_home/workspace/sentiment-ai-pipeline/coverage.xml
+```
+![image](https://hackmd.io/_uploads/BkC0n5zfzl.png)
+![image](https://hackmd.io/_uploads/Skt4a5GMMx.png)
+
+**Pourquoi `set +e` / `set -e` ?**  
+Par défaut, Bash arrête le script dès qu'une commande retourne un code non nul (`set -e`). On désactive temporairement ce comportement (`set +e`) pour pouvoir copier `coverage.xml` même en cas d'échec de pytest, puis on restaure le comportement strict (`set -e`) avant de retourner le bon code de sortie. Sans ce mécanisme, un échec de `pytest` bloquerait la copie du fichier et SonarQube n'aurait pas accès au rapport.
+
+### 2.2 Ajouter le stage SonarQube Analysis
+
+Placez ce stage **après** Build & Test et **avant** Quality Gate :
+
+```groovy
+stage('SonarQube Analysis') {
+  environment {
+    SONARQUBE_TOKEN = credentials('sonar-token')
+  }
+  steps {
+    withSonarQubeEnv('sonarqube') {
+      sh '''
+        docker run --rm \
+          --network cicd-network \
+          --volumes-from jenkins \
+          -w "$WORKSPACE" \
+          -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+          -e SONAR_TOKEN="$SONARQUBE_TOKEN" \
+          sonarsource/sonar-scanner-cli:latest \
+          sonar-scanner \
+            -Dsonar.projectKey=sentiment-ai \
+            -Dsonar.projectName=SentimentAI \
+            -Dsonar.projectBaseDir="$WORKSPACE" \
+            -Dsonar.sources=src \
+            -Dsonar.python.version=3.11 \
+            -Dsonar.python.coverage.reportPaths=coverage.xml \
+            -Dsonar.sourceEncoding=UTF-8 \
+            -Dsonar.scanner.metadataFilePath=$WORKSPACE/report-task.txt
+      '''
+    }
+  }
+}
+```
+
+- Fichier Jenkinsfile : 
+```bash
+cat > Jenkinsfile << 'EOF'
+pipeline {
+  agent any
+
+  environment {
+    IMAGE_NAME = 'sentiment-ai'
+    REGISTRY   = 'ghcr.io/dspitech'
+    REGISTRY_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          env.IMAGE_TAG = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        }
+      }
+    }
+
+    stage('Info') {
+      steps {
+        sh 'git log --oneline -3'
+        sh 'echo "Workspace OK"'
+      }
+    }
+
+    stage('Lint') {
+      steps {
+        sh '''
+          docker run --rm \
+            -v $WORKSPACE:/app \
+            -w /app \
+            python:3.12-slim \
+            sh -c "pip install flake8 -q && flake8 ."
+        '''
+      }
+    }
+
+    stage('Build & Test') {
+      steps {
+        sh '''
+          IMAGE_NAME=sentiment-ai
+
+          docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
+          docker rm -f test-runner 2>/dev/null || true
+
+          set +e
+
+          docker run \
+            -e CI=true \
+            --name test-runner \
+            ${IMAGE_NAME}:${IMAGE_TAG} \
+            pytest tests/ -v \
+              --cov=src \
+              --cov-report=xml:/tmp/coverage.xml \
+              --cov-report=term-missing \
+              --cov-fail-under=70
+
+          TEST_EXIT_CODE=$?
+          set -e
+
+          docker cp test-runner:/tmp/coverage.xml ./coverage.xml 2>/dev/null || true
+
+          docker rm -f test-runner 2>/dev/null || true
+
+          exit $TEST_EXIT_CODE
+        '''
+      }
+
+      post {
+        failure {
+          echo 'Tests échoués ou coverage < 70%'
+        }
+      }
+    }
+
+    stage('SonarQube Analysis') {
+      environment {
+        SONARQUBE_TOKEN = credentials('sonar-token')
+      }
+
+      steps {
+        withSonarQubeEnv(installationName: 'sonarqube') {
+          sh '''
+            docker run --rm \
+              -v $WORKSPACE:/usr/src \
+              -w /usr/src \
+              -e SONAR_HOST_URL=$SONAR_HOST_URL \
+              -e SONAR_TOKEN=$SONARQUBE_TOKEN \
+              sonarsource/sonar-scanner-cli:latest \
+              sonar-scanner \
+                -Dsonar.projectKey=sentiment-ai \
+                -Dsonar.projectName=SentimentAI \
+                -Dsonar.projectBaseDir=/usr/src \
+                -Dsonar.sources=. \
+                -Dsonar.python.version=3.11 \
+                -Dsonar.python.coverage.reportPaths=coverage.xml \
+                -Dsonar.sourceEncoding=UTF-8
+          '''
+        }
+      }
+    }
+
+    stage('Push to GHCR') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'github-token',
+          usernameVariable: 'GITHUB_USER',
+          passwordVariable: 'GITHUB_TOKEN'
+        )]) {
+          sh '''
+            echo $GITHUB_TOKEN | docker login ghcr.io -u $GITHUB_USER --password-stdin
+
+            docker tag sentiment-ai:${IMAGE_TAG} ${REGISTRY_IMAGE}:${IMAGE_TAG}
+            docker tag sentiment-ai:${IMAGE_TAG} ${REGISTRY_IMAGE}:latest
+
+            docker push ${REGISTRY_IMAGE}:${IMAGE_TAG}
+            docker push ${REGISTRY_IMAGE}:latest
+          '''
+        }
+      }
+    }
+
+  }
+
+  post {
+    success {
+      echo "Pipeline OK - Image pushed: ${REGISTRY_IMAGE}:${IMAGE_TAG}"
+    }
+    failure {
+      echo "Pipeline FAILED"
+    }
+  }
+}
+EOF
+```
+![image](https://hackmd.io/_uploads/BJYWRqzGGx.png)
+
+
+**`--volumes-from jenkins`** : monte les volumes du conteneur Jenkins dans le conteneur sonar-scanner-cli. Le workspace Jenkins (avec le code source et `coverage.xml`) devient ainsi accessible au scanner sans avoir à le copier manuellement.  
+**`-Dsonar.scanner.metadataFilePath`** : indique à SonarQube où écrire le fichier `report-task.txt` contenant l'ID de l'analyse - nécessaire pour que `waitForQualityGate` sache quelle analyse attendre.
+
+- Test 
+
+```bash
+git add Jenkinsfile
+git commit -m "fix: adjust sonar sources path and base directory"
+git push origin main
+```
+![image](https://hackmd.io/_uploads/Bke73sGGfg.png)
+
+#### Résultat du build
+![image](https://hackmd.io/_uploads/r1QL3oMGfe.png)
+![image](https://hackmd.io/_uploads/B1I_3iGMzg.png)
+
+
+
+### 2.3 Ajouter le stage Quality Gate
+
+```groovy
+stage('Quality Gate') {
+  steps {
+    timeout(time: 15, unit: 'MINUTES') {
+      // Attend le résultat asynchrone du Quality Gate SonarQube via webhook
+      // abortPipeline: true => arrête le pipeline si le gate échoue
+      waitForQualityGate abortPipeline: true
+    }
+  }
+}
+```
+
+#### Fichier Jenkinsfile
+
+```bash
+cat > Jenkinsfile << 'EOF'
+pipeline {
+  agent any
+
+  environment {
+    IMAGE_NAME = 'sentiment-ai'
+    REGISTRY   = 'ghcr.io/dspitech'
+    REGISTRY_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          env.IMAGE_TAG = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        }
+      }
+    }
+
+    stage('Info') {
+      steps {
+        sh 'git log --oneline -3'
+        sh 'echo "Workspace OK"'
+      }
+    }
+
+    stage('Lint') {
+      steps {
+        sh '''
+          docker run --rm \
+            -v $WORKSPACE:/app \
+            -w /app \
+            python:3.12-slim \
+            sh -c "pip install flake8 -q && flake8 ."
+        '''
+      }
+    }
+
+    stage('Build & Test') {
+      steps {
+        sh '''
+          IMAGE_NAME=sentiment-ai
+
+          docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
+          docker rm -f test-runner 2>/dev/null || true
+
+          set +e
+
+          docker run \
+            -e CI=true \
+            --name test-runner \
+            ${IMAGE_NAME}:${IMAGE_TAG} \
+            pytest tests/ -v \
+              --cov=src \
+              --cov-report=xml:/tmp/coverage.xml \
+              --cov-report=term-missing \
+              --cov-fail-under=70
+
+          TEST_EXIT_CODE=$?
+          set -e
+
+          docker cp test-runner:/tmp/coverage.xml ./coverage.xml 2>/dev/null || true
+
+          docker rm -f test-runner 2>/dev/null || true
+
+          exit $TEST_EXIT_CODE
+        '''
+      }
+
+      post {
+        failure {
+          echo 'Tests échoués ou coverage < 70%'
+        }
+      }
+    }
+
+    stage('SonarQube Analysis & Quality Gate') {
+      environment {
+        SONARQUBE_TOKEN = credentials('sonar-token')
+        SONAR_HOST_URL  = 'http://4.223.165.64:9000/'
+      }
+
+      steps {
+        sh '''
+          if [ ! -d "$HOME/.sonar/sonar-scanner-5.0.1.3006-linux" ]; then
+            echo "Téléchargement du Sonar Scanner natif..."
+            mkdir -p $HOME/.sonar
+            curl -sSLo $HOME/.sonar/sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+            unzip -q -o $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
+          fi
+
+          echo "Exécution du scan natif..."
+          $HOME/.sonar/sonar-scanner-5.0.1.3006-linux/bin/sonar-scanner \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONARQUBE_TOKEN \
+            -Dsonar.projectKey=sentiment-ai \
+            -Dsonar.projectName=SentimentAI \
+            -Dsonar.sources=src \
+            -Dsonar.python.version=3.11 \
+            -Dsonar.python.coverage.reportPaths=coverage.xml \
+            -Dsonar.sourceEncoding=UTF-8
+
+          echo "Vérification du Quality Gate..."
+          sleep 5
+          STATUS=$(curl -s -u "${SONARQUBE_TOKEN}:" "${SONAR_HOST_URL}api/qualitygates/project_status?projectKey=sentiment-ai" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+          echo "Le statut du Quality Gate SonarQube est : $STATUS"
+          
+          if [ "$STATUS" = "ERROR" ]; then
+            echo "Le Quality Gate a échoué !"
+            exit 1
+          fi
+        '''
+      }
+    }
+
+    stage('Push to GHCR') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'github-token',
+          usernameVariable: 'GITHUB_USER',
+          passwordVariable: 'GITHUB_TOKEN'
+        )]) {
+          sh '''
+            echo $GITHUB_TOKEN | docker login ghcr.io -u $GITHUB_USER --password-stdin
+
+            docker tag sentiment-ai:${IMAGE_TAG} ${REGISTRY_IMAGE}:${IMAGE_TAG}
+            docker tag sentiment-ai:${IMAGE_TAG} ${REGISTRY_IMAGE}:latest
+
+            docker push ${REGISTRY_IMAGE}:${IMAGE_TAG}
+            docker push ${REGISTRY_IMAGE}:latest
+          '''
+        }
+      }
+    }
+
+  }
+
+  post {
+    success {
+      echo "Pipeline OK - Image pushed: ${REGISTRY_IMAGE}:${IMAGE_TAG}"
+    }
+    failure {
+      echo "Pipeline FAILED"
+    }
+  }
+}
+EOF
+```
+![image](https://hackmd.io/_uploads/HJSA3jzfMx.png)
+
+
+**Fonctionnement de `waitForQualityGate`**  
+SonarQube analyse le code de façon **asynchrone** après réception des données du scanner. `waitForQualityGate` suspend Jenkins en attendant la notification via le webhook configuré. Si le Quality Gate échoue (ex : coverage < 70%), `abortPipeline: true` arrête le pipeline - l'image ne sera jamais poussée vers le registry.
+
+#### Test
+```bash
+git add Jenkinsfile
+git commit -m "fix: pass explicitly SONAR_HOST_URL env variable"
+git push origin main
+```
+![image](https://hackmd.io/_uploads/S1J54hGzGx.png)
+
+
+
+#### Résultat 
+![image](https://hackmd.io/_uploads/HyJRN3MGzl.png)
+
+### 2.4 Configurer le Quality Gate personnalisé
+
+Dans SonarQube :
+
+```
+Quality Gates → Create → Nom : SentimentAI-Gate
+→ Add Condition : Coverage ≥ 70% (sur Overall Code)
+→ Add Condition : Reliability Rating ≥ B
+→ SentimentAI → Project Settings → Quality Gate → SentimentAI-Gate
+```
+
+---
+
+### Réponse 2.1 - Dashboard SonarQube de SentimentAI
+
+**Note :** Un screenshot réel doit être joint au rendu. Le dashboard affiche les 5 métriques principales du projet `sentiment-ai` : Bugs, Vulnerabilities, Code Smells, Coverage (en %), et Duplications (en %). Après une première analyse, les valeurs typiques pour SentimentAI seraient par exemple : 0 bugs, 0 vulnérabilités, 3 code smells, 82% coverage, 0% duplication.
+![image](https://hackmd.io/_uploads/Hy_tt3GGfl.png)
+![image](https://hackmd.io/_uploads/Hk-N9nfzzg.png)
+
+
+---
+
+### Réponse 2.2 - Résultat du Quality Gate
+
+Le Quality Gate configuré définit deux conditions :
+- Coverage ≥ 70% sur Overall Code
+- Reliability Rating ≥ B (c'est-à-dire 0 bug bloquant)
+
+**Si le coverage dépasse 70% et qu'aucun bug de sévérité A n'est détecté → Quality Gate vert (Passed).**
+
+Le pipeline continue jusqu'au stage Push et l'image est poussée vers GHCR.
+
+**Si le coverage est inférieur à 70% ou qu'un bug critique est présent → Quality Gate rouge (Failed).**
+
+`waitForQualityGate abortPipeline: true` reçoit la notification d'échec via le webhook et déclenche l'arrêt immédiat du pipeline. Les stages Security Scan, Push et Deploy Staging ne sont jamais exécutés.
+
+---
+
+### Réponse 2.3 - Exemple de Code Smell signalé par SonarQube
+
+Un exemple typique que SonarQube signale dans du code Python :
+
+```
+src/sentiment.py:45 - Remove this commented-out code.
+```
+
+Ou encore :
+
+```
+src/api.py:12 - Merge this if statement with the enclosing one.
+```
+
+**Correction :** Supprimer le code commenté (il doit vivre dans Git, pas dans le fichier source) ou fusionner les conditions `if` imbriquées en une seule expression avec `and` :
+
+```python
+# Avant (Code Smell - if imbriqués)
+if text:
+    if len(text) > 0:
+        return analyze(text)
+
+# Après (corrigé)
+if text and len(text) > 0:
+    return analyze(text)
+```
+
+---
+
+### Réponse 2.4 - Impact d'un Quality Gate échoué dans Jenkins
+
+Quand le Quality Gate échoue :
+
+1. SonarQube envoie une notification `FAILED` au webhook Jenkins (`http://jenkins:8080/sonarqube-webhook/`).
+2. `waitForQualityGate abortPipeline: true` reçoit ce statut et **lève une exception** dans le pipeline.
+3. Jenkins marque le build comme **FAILED** (rouge) et **arrête l'exécution immédiatement**.
+4. Le stage **Security Scan** (stage 6) n'est jamais atteint.
+5. Le stage **Push to GHCR** (stage 7) n'est jamais exécuté - l'image reste locale et n'est pas publiée.
+6. Le stage **Deploy Staging** (stage 8) n'est jamais exécuté - aucune mise en production.
+
+C'est précisément l'objectif : empêcher qu'une image de mauvaise qualité soit distribuée ou déployée.
+
+---
+
+## 3 - Scanner l'image avec Trivy
+
+**Trivy** (Aqua Security) est un scanner de vulnérabilités open source. Là où SonarQube inspecte le code source, Trivy inspecte l'**image Docker produite** : il liste toutes les CVE connues dans les paquets OS installés et les dépendances Python.
+
+### 3.1 Tester Trivy manuellement
+
+Avant d'intégrer Trivy dans le pipeline, testez-le pour comprendre le format du rapport :
+
+```bash
+# Scanner l'image SentimentAI avec Trivy via Docker
+# --exit-code 0 : affiche les vulnérabilités sans faire échouer la commande
+docker run --rm \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $HOME/.cache/trivy:/root/.cache/trivy \
+  aquasec/trivy:latest image \
+  --severity HIGH,CRITICAL \
+  --exit-code 0 \
+  sentiment-ai:e41f837
+```
+![image](https://hackmd.io/_uploads/SJEashffMe.png)
+![image](https://hackmd.io/_uploads/H1SRj3zzMl.png)
+![image](https://hackmd.io/_uploads/SJbk2nMzfe.png)
+
+
+Le rapport affiché contient :
+
+| Colonne | Signification |
+|---|---|
+| `SEVERITY` | Niveau de risque : `HIGH` ou `CRITICAL` |
+| `Vulnerability` | Identifiant CVE (ex : `CVE-2023-1234`) |
+| `Fixed Version` | Version corrigée disponible (vide = pas encore de correctif) |
+
+**Corriger une CVE dans `requirements.txt`** :
+
+```bash
+# 1. Repérez la colonne "Fixed Version" dans le rapport Trivy
+# 2. Mettez à jour requirements.txt
+#    ex: requests==2.31.0  →  requests==2.32.0
+
+# 3. Rebuildez et re-scannez
+docker build -t sentiment-ai:latest .
+docker run --rm \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  aquasec/trivy:latest image \
+  --severity HIGH,CRITICAL \
+  --exit-code 0 \
+  sentiment-ai:latest
+```
+![image](https://hackmd.io/_uploads/BkoK2hfzzx.png)
+
+
+> Si la colonne `Fixed Version` est **vide**, il n'existe pas encore de correctif disponible pour cette CVE.
+
+### 3.2 Ajouter le stage Security Scan au Jenkinsfile
+
+Placez ce stage **après** Quality Gate et **avant** Push :
+
+```groovy
+stage('Security Scan') {
+  steps {
+    // --exit-code 1 : fait échouer le stage si une CVE HIGH ou CRITICAL est trouvée
+    // --format table : rapport lisible dans les logs Jenkins
+    // trivy-cache : volume Docker nommé pour mettre en cache la base de données CVE
+    sh '''
+      docker run --rm \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v trivy-cache:/root/.cache/trivy \
+        aquasec/trivy:latest image \
+        --severity HIGH,CRITICAL \
+        --exit-code 1 \
+        --format table \
+    ''' + "${IMAGE_NAME}:${IMAGE_TAG}"
+  }
+  post {
+    failure {
+      echo 'Vulnérabilités CRITICAL ou HIGH détectées !'
+      echo 'Corrigez les dépendances avant de déployer.'
+    }
+  }
+}
+```
+
+#### Fichier Jenkinsfile
+
+```bash
+cat > Jenkinsfile << 'EOF'
+pipeline {
+  agent any
+
+  environment {
+    IMAGE_NAME = 'sentiment-ai'
+    REGISTRY   = 'ghcr.io/dspitech'
+    REGISTRY_IMAGE = "${REGISTRY}/${IMAGE_NAME}"
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          env.IMAGE_TAG = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        }
+      }
+    }
+
+    stage('Info') {
+      steps {
+        sh 'git log --oneline -3'
+        sh 'echo "Workspace OK"'
+      }
+    }
+
+    stage('Lint') {
+      steps {
+        sh '''
+          docker run --rm \
+            -v $WORKSPACE:/app \
+            -w /app \
+            python:3.12-slim \
+            sh -c "pip install flake8 -q && flake8 ."
+        '''
+      }
+    }
+
+    stage('Build & Test') {
+      steps {
+        sh '''
+          IMAGE_NAME=sentiment-ai
+
+          docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
+          docker rm -f test-runner 2>/dev/null || true
+
+          set +e
+
+          docker run \
+            -e CI=true \
+            --name test-runner \
+            ${IMAGE_NAME}:${IMAGE_TAG} \
+            pytest tests/ -v \
+              --cov=src \
+              --cov-report=xml:/tmp/coverage.xml \
+              --cov-report=term-missing \
+              --cov-fail-under=70
+
+          TEST_EXIT_CODE=$?
+          set -e
+
+          docker cp test-runner:/tmp/coverage.xml ./coverage.xml 2>/dev/null || true
+
+          docker rm -f test-runner 2>/dev/null || true
+
+          exit $TEST_EXIT_CODE
+        '''
+      }
+
+      post {
+        failure {
+          echo 'Tests échoués ou coverage < 70%'
+        }
+      }
+    }
+
+    stage('SonarQube Analysis & Quality Gate') {
+      environment {
+        SONARQUBE_TOKEN = credentials('sonar-token')
+        SONAR_HOST_URL  = 'http://4.223.165.64:9000/'
+      }
+
+      steps {
+        sh '''
+          if [ ! -d "$HOME/.sonar/sonar-scanner-5.0.1.3006-linux" ]; then
+            echo "Téléchargement du Sonar Scanner natif..."
+            mkdir -p $HOME/.sonar
+            curl -sSLo $HOME/.sonar/sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+            unzip -q -o $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
+          fi
+
+          echo "Exécution du scan natif..."
+          $HOME/.sonar/sonar-scanner-5.0.1.3006-linux/bin/sonar-scanner \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONARQUBE_TOKEN \
+            -Dsonar.projectKey=sentiment-ai \
+            -Dsonar.projectName=SentimentAI \
+            -Dsonar.sources=src \
+            -Dsonar.python.version=3.11 \
+            -Dsonar.python.coverage.reportPaths=coverage.xml \
+            -Dsonar.sourceEncoding=UTF-8
+
+          echo "Vérification du Quality Gate..."
+          sleep 5
+          STATUS=$(curl -s -u "${SONARQUBE_TOKEN}:" "${SONAR_HOST_URL}api/qualitygates/project_status?projectKey=sentiment-ai" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+          echo "Le statut du Quality Gate SonarQube est : $STATUS"
+          
+          if [ "$STATUS" = "ERROR" ]; then
+            echo "Le Quality Gate a échoué !"
+            exit 1
+          fi
+        '''
+      }
+    }
+
+    stage('Security Scan') {
+      steps {
+        sh '''
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache/trivy \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --format table \
+        ''' + "${IMAGE_NAME}:${IMAGE_TAG}"
+      }
+      post {
+        failure {
+          echo 'Vulnérabilités CRITICAL ou HIGH détectées !'
+          echo 'Corrigez les dépendances avant de déployer.'
+        }
+      }
+    }
+
+    stage('Push to GHCR') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'github-token',
+          usernameVariable: 'GITHUB_USER',
+          passwordVariable: 'GITHUB_TOKEN'
+        )]) {
+          sh '''
+            echo $GITHUB_TOKEN | docker login ghcr.io -u $GITHUB_USER --password-stdin
+
+            docker tag sentiment-ai:${IMAGE_TAG} ${REGISTRY_IMAGE}:${IMAGE_TAG}
+            docker tag sentiment-ai:${IMAGE_TAG} ${REGISTRY_IMAGE}:latest
+
+            docker push ${REGISTRY_IMAGE}:${IMAGE_TAG}
+            docker push ${REGISTRY_IMAGE}:latest
+          '''
+        }
+      }
+    }
+
+  }
+
+  post {
+    success {
+      echo "Pipeline OK - Image pushed: ${REGISTRY_IMAGE}:${IMAGE_TAG}"
+    }
+    failure {
+      echo "Pipeline FAILED"
+    }
+  }
+}
+EOF
+```
+
+#### Test 
+```bash
+git add Jenkinsfile
+git commit -m "feat: add automated trivy security scan stage"
+git push origin main
+```
+![image](https://hackmd.io/_uploads/BJI7pnGzfl.png)
+
+
+**`-v /var/run/docker.sock:/var/run/docker.sock`**  
+Trivy a besoin d'accéder au **daemon Docker** de l'hôte pour inspecter l'image. Le fichier `/var/run/docker.sock` est la socket Unix qui permet de communiquer avec ce daemon. Sans ce montage, Trivy tourne dans un conteneur isolé qui ne voit pas les images Docker de l'hôte - l'analyse est impossible.
+
+**Stratégie progressive**  
+Commencez avec `--exit-code 0` pour découvrir l'état réel de vos images sans bloquer le pipeline. Une fois les CVE CRITICAL corrigées, passez à `--exit-code 1`. En production, on bloque systématiquement sur CRITICAL et souvent sur HIGH également.
+
+---
+
+### Réponse 3.1 - Résumé du rapport Trivy
+
+
+
+Le rapport Trivy met en évidence plusieurs vulnérabilités détectées dans l'image Docker analysée.
+
+### 1. Vulnérabilités du système d'exploitation
+
+- **Système détecté :** Debian 13.5
+- Trivy a identifié que l'image Docker repose sur une base **Debian 13.5**.
+- Sur cette couche système, **11 vulnérabilités de niveau HIGH ou CRITICAL** ont été détectées.
+
+### 2. Vulnérabilités des dépendances Python
+
+Au niveau des bibliothèques Python utilisées par l'application :
+
+- **starlette** (dépendance installée automatiquement par **FastAPI**) contient :
+  - **3 vulnérabilités de niveau HIGH ou CRITICAL**
+
+- **wheel** :
+  - **1 vulnérabilité détectée**
+
+- **setuptools** (notamment via le sous-package `jaraco.context`) :
+  - **1 vulnérabilité détectée**
+
+### Conclusion
+
+L'analyse Trivy révèle des vulnérabilités à deux niveaux :
+
+1. **Système d'exploitation (Debian 13.5)** : 11 vulnérabilités HIGH/CRITICAL.
+2. **Dépendances applicatives Python** : plusieurs vulnérabilités affectant notamment `starlette`, `wheel` et `setuptools`.
+
+Ces résultats indiquent la nécessité de :
+- Mettre à jour l'image de base Docker.
+- Mettre à jour les dépendances Python concernées.
+- Relancer une analyse Trivy après correction afin de vérifier la disparition des vulnérabilités détectées.
+
+Dans cet exemple : **3 CRITICAL** et **12 HIGH** détectées au total entre les paquets OS Debian et les dépendances Python.
+
+---
+
+###  Réponse 3.2 - Analyse d'une CVE et correction
+
+#### Correction dans Dockerfile (Pour les 11 CVE Debian)
+
+```bash
+cat > Dockerfile << 'EOF'
+FROM python:3.11-slim
+
+WORKDIR /app
+# --- AJOUTER CETTE LIGNE POUR CORRIGER LES CVE SYSTÈME ---
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EOF
+```
+![image](https://hackmd.io/_uploads/Hya-ypfGzx.png)
+
+#### Correction dans requirements.txt (Pour Starlette, Requests, etc.)
+
+```bash
+cat > requirements.txt << 'EOF'
+fastapi>=0.111.0
+uvicorn==0.27.0
+requests>=2.31.0
+httpx
+pytest
+pytest-cov
+EOF
+```
+
+![image](https://hackmd.io/_uploads/HyCHlafffe.png)
+
+
+#### Mise à jour du dépôt
+
+```bash
+git add Dockerfile requirements.txt
+git commit -m "fix: patch dependencies and base image to satisfy security requirements"
+git push origin main
+```
+![image](https://hackmd.io/_uploads/H12j1TzMMe.png)
+
+---
+
+### Réponse 3.3 - Pourquoi `-v /var/run/docker.sock:/var/run/docker.sock` ?
+
+`/var/run/docker.sock` est la **socket Unix** du daemon Docker de l'hôte - l'interface de communication entre les clients Docker et le moteur qui gère les conteneurs et les images.
+
+Trivy lui-même s'exécute dans un conteneur Docker. Sans ce montage, ce conteneur Trivy est complètement isolé et ne voit pas les images présentes sur l'hôte. En montant la socket Docker de l'hôte dans le conteneur Trivy, on lui donne accès au daemon Docker de la machine hôte : il peut ainsi lister les images locales et inspecter leurs layers pour y détecter les CVE.
+
+**En résumé :** sans `-v /var/run/docker.sock:/var/run/docker.sock`, Trivy ne peut pas voir l'image `sentiment-ai:latest` et le scan est impossible.
+
+---
+
+## 4 - Pipeline complet 8 stages
+
+### 4.1 Vue d'ensemble
+
+| # | Stage | Ce qu'il fait | Condition |
+|---|---|---|---|
+| 1 | **Checkout** | Clone le repo Git + calcule l'`IMAGE_TAG` | Toujours |
+| 2 | **Lint** | Vérifie la syntaxe Python avec `flake8` | Toujours |
+| 3 | **Build & Test** | Docker build + `pytest` + génère `coverage.xml` | Toujours |
+| 4 | **SonarQube Analysis** | Analyse statique du code source | Toujours |
+| 5 | **Quality Gate** | Bloque si coverage < 70% ou bugs critiques | Toujours |
+| 6 | **Security Scan** | Scan CVE Trivy - bloque si CRITICAL ou HIGH | Toujours |
+| 7 | **Push to GHCR** | Pousse l'image vers `ghcr.io` | Branche `main` uniquement |
+| 8 | **Deploy Staging** | Déploie en staging via `docker compose` | Branche `main` uniquement |
+
+
+
+### 4.3 Commit final 
+
+```bash
+cat >> README.md << 'EOF'
+
+## Pipeline CI/CD - SentimentAI
+Ce projet utilise un pipeline Jenkins complet automatisé en 8 étapes :
+1. Checkout SCM
+2. Info
+3. Lint (flake8)
+4. Build & Test (pytest + coverage)
+5. SonarQube Analysis & Quality Gate
+6. Security Scan (Trivy avec blocage sur CRITICAL/HIGH)
+7. Push to GHCR
+8. Post Actions
+EOF
+```
+
+```bash
+git add README.md
+git commit -m "ci: finalize pipeline with 8 stages (sonar, trivy, deploy)"
+git push origin main
+```
+![image](https://hackmd.io/_uploads/BkdffpzGfl.png)
+![image](https://hackmd.io/_uploads/H1ROm6zfGl.png)
+
+
+
+---
+
+### Réponse 4.1 - Pipeline Jenkins 8 stages en vert
+
+> **Note :** Un screenshot réel doit être joint au rendu. Il doit montrer les 8 stages - Checkout, Lint, Build & Test, SonarQube Analysis, Quality Gate, Security Scan, Push to GHCR, Deploy Staging - tous affichés en vert dans la vue Blue Ocean ou la vue classique de Jenkins.
+
+---
+
+### Réponse 4.2 - Durée totale et stage le plus long
+
+La durée totale attendue est de **5 à 10 minutes** selon les performances de la machine hôte et la disponibilité du cache Trivy.
+
+Le stage le plus long est généralement **Build & Test** ou **SonarQube Analysis** :
+
+- **Build & Test** : Docker doit construire l'image complète (téléchargement des layers si pas en cache, installation des dépendances Python), puis exécuter pytest sur l'ensemble des tests avec calcul de la couverture.
+- **SonarQube Analysis** : le scanner télécharge `sonarsource/sonar-scanner-cli:latest` (si absent du cache Docker), analyse l'intégralité du code source et envoie les résultats. `waitForQualityGate` ajoute également un temps d'attente asynchrone lié à l'analyse serveur SonarQube.
+
+Sur une machine sans cache Docker préconstruit, **Build & Test** est souvent le plus long car il cumule build d'image + téléchargement de paquets + exécution des tests.
+
+---
+
+###  Réponse 4.3 - Arrêt du pipeline sur CVE CRITICAL
+
+Le pipeline s'arrête au **stage 6 - Security Scan**.
+
+Trivy détecte la CVE CRITICAL, retourne un code de sortie `1` (grâce à `--exit-code 1`), ce qui fait échouer la commande `sh` dans Jenkins. Le stage est marqué FAILED et le pipeline s'arrête.
+
+**Conséquences :**
+
+| Stage | Exécuté ? |
+|---|---|
+| 1 Checkout |  Oui |
+| 2 Lint |  Oui |
+| 3 Build & Test |  Oui |
+| 4 SonarQube Analysis | Oui |
+| 5 Quality Gate |  Oui |
+| 6 Security Scan |  FAILED - pipeline arrêté |
+| **7 Push to GHCR** | ** Jamais exécuté** |
+| **8 Deploy Staging** | ** Jamais exécuté** |
+
+L'image reste uniquement en local et n'est **jamais publiée** sur GHCR, empêchant sa propagation en staging ou en production.
+
+---
+
+###  Réponse 4.4 - Déploiement Blue/Green
+
+Le déploiement **Blue/Green** consiste à maintenir **deux environnements de production identiques** : l'un actif (Blue, qui reçoit le trafic), l'autre en attente (Green). Lors d'un déploiement, la nouvelle version est déployée sur Green, testée, puis le trafic est basculé instantanément de Blue vers Green via un load balancer ou un DNS.
+
+**Avantage principal par rapport au déploiement direct (notre `docker compose up -d`) :**
+
+En cas de problème sur la nouvelle version, le rollback est **immédiat** - il suffit de re-basculer le trafic vers Blue, sans downtime ni reconstruction d'image. Notre approche actuelle (`down` puis `up`) implique une interruption de service pendant le redémarrage et nécessite un rebuild si le rollback est nécessaire.
+
+---
+
+## Questions de synthèse
+
+###  Synthèse 1 - SonarQube vs Trivy : différences fondamentales
+
+| | SonarQube | Trivy |
+|---|---|---|
+| **Ce qu'il inspecte** | Le **code source** (fichiers `.py`, logique applicative) | L'**image Docker** (layers OS + dépendances installées) |
+| **Ce qu'il détecte** | Bugs logiques, failles dans le code applicatif, mauvaises pratiques, coverage insuffisant | CVE dans les paquets Debian/Alpine/Ubuntu et les librairies Python (`pip`) |
+| **Ce qu'il ne voit PAS** | Les vulnérabilités dans les paquets système de l'image Docker | Les bugs logiques, code smells, ou manque de tests dans le code source |
+
+En résumé : SonarQube protège contre les **erreurs du développeur**, Trivy protège contre les **failles des dépendances tierces**. Les deux sont complémentaires et indispensables.
+
+---
+
+### Synthèse 2 - Ordre Quality Gate → Security Scan → Push
+
+L'ordre est délibéré et suit le principe du **fail fast** (échouer le plus tôt possible) :
+
+1. **Quality Gate avant Security Scan** : inutile de scanner une image si le code source est de mauvaise qualité ou sous-testé. On évite de perdre du temps à analyser une image qui de toute façon ne passerait pas.
+2. **Security Scan avant Push** : inutile de pousser une image vulnérable sur le registry. Une image sur GHCR peut être récupérée par d'autres pipelines ou déployée par erreur.
+3. **Push en dernier** (avant Deploy) : l'image ne quitte la machine locale que si elle a passé **toutes** les vérifications précédentes.
+
+Cet ordre minimise également les coûts : pousser une image vers un registry consomme de la bande passante et du temps - autant ne le faire que si l'image est sûre et de qualité.
+
+---
+
+###  Synthèse 3 - Coverage 65% et Quality Gate à 70%
+
+Non, une image avec 65% de coverage **ne passe pas** le Quality Gate configuré à 70%.
+
+Voici ce qui se passe exactement dans Jenkins :
+
+1. `pytest` s'exécute avec `--cov-fail-under=70` → le stage **Build & Test** échoue déjà (code de sortie non nul).
+2. Si on corrige ce seuil dans pytest mais pas dans SonarQube : l'analyse SonarQube reçoit `coverage.xml`, calcule 65%, et marque le Quality Gate comme **FAILED**.
+3. SonarQube notifie Jenkins via le webhook.
+4. `waitForQualityGate abortPipeline: true` reçoit le statut FAILED et **lève une exception** dans le pipeline.
+5. Jenkins marque le build en rouge et arrête l'exécution.
+6. Les stages Security Scan, Push to GHCR et Deploy Staging ne sont jamais atteints.
+
+---
+
+###  Synthèse 4 - Dette technique et Code Smells SonarQube
+
+La **dette technique** est une métaphore financière : comme une dette d'argent, elle s'accumule avec intérêts. Chaque fois qu'un développeur choisit une solution rapide mais sous-optimale (code dupliqué, variable mal nommée, fonction trop longue, absence de tests), il contracte une dette - le code fonctionne aujourd'hui, mais sera plus difficile et coûteux à modifier demain.
+
+Les **Code Smells SonarQube** sont la mesure concrète de cette dette : SonarQube estime pour chaque smell le temps nécessaire pour le corriger (en minutes) et les somme pour afficher une **dette technique totale** (ex : "3h 20min"). Plus la dette est élevée, plus les futures évolutions, corrections de bugs et montées en version seront lentes et risquées.
+
+**Lien direct :** chaque Code Smell non corrigé = une ligne de la dette. Ignorer les Code Smells pendant des mois conduit à un code impossible à tester, refactoriser ou transférer à un nouveau développeur.
+
+---
+
+###  Synthèse 5 - `git log --oneline` sur `main`
+
+> **Note :** La liste ci-dessous doit être remplacée par la sortie réelle de `git log --oneline -5` sur votre machine. Voici un exemple conforme aux commits conventionnels attendus :
+
+```bash
+git log --oneline -5
+```
+
+```
+a3f9c12 ci: finalize pipeline with 8 stages (sonar, trivy, deploy)
+b7d2e41 ci: add security scan stage with Trivy
+c1f8a03 ci: add sonarqube analysis and quality gate stages
+d4e9b17 test: add coverage reporting with pytest-cov
+e2c5f88 feat: initial SentimentAI application with Docker setup
+```
+
+Les messages suivent la convention **Conventional Commits** : `type(scope): description` où `type` est `feat`, `fix`, `ci`, `test`, `docs`, `refactor`, etc.
+
+---
+
+
+
